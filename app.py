@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, jsonify, session, send_from_directory
+from flask import Flask, render_template, render_template_string, request, jsonify, session, send_from_directory
 import requests
 import uuid
 import os
