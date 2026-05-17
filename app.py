@@ -39,7 +39,7 @@ os.makedirs(APK_FOLDER, ignore_ok=True)
 def index():
     return render_template_string(INDEX_HTML)
 
-@app.route('/get_main_web')
+@app.route('/Getkey.php')
 def get_main_web():
     session_id = str(uuid.uuid4())
     session['session_id'] = session_id
@@ -102,7 +102,6 @@ def done_key():
         return render_template_string(ERROR_HTML, message="Phiên làm việc không tồn tại hoặc đã hết hạn!")
 
 # --- API KẾT NỐI VỚI APP APK CỦA BẠN ---
-# Khi App Android bật lên, hãy thực hiện một POST request gửi {"key": "KEY_CUA_USER"} đến URL này
 @app.route('/api/verify_key', methods=['POST'])
 def verify_key():
     req_data = request.json or {}
@@ -143,7 +142,7 @@ INDEX_HTML = """
 </head>
 <body style="background:#0f172a; color:white; text-align:center; padding-top:10%;">
     <h2>Hệ Thống Xác Thực Key</h2>
-    <a href="/get_main_web" style="color:#3b82f6; font-size:18px;">Đi tới trang lấy Key</a>
+    <a href="/Getkey.php" style="color:#3b82f6; font-size:18px;">Đi tới trang lấy Key</a>
 </body>
 </html>
 """
@@ -379,7 +378,7 @@ ERROR_HTML = """
         <div class="error-icon">⚠️</div>
         <h2>Đã xảy ra lỗi</h2>
         <p>{{ message }}</p>
-        <a href="/get_main_web" class="back-btn">Quay lại trang chủ</a>
+        <a href="/Getkey.php" class="back-btn">Quay lại trang chủ</a>
     </div>
 </body>
 </html>
