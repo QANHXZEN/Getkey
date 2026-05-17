@@ -136,7 +136,7 @@ def verify_key():
                 'message': '✅ Key hợp lệ!',
                 'key': user_key,
                 'expires_at': expire_at.isoformat(),
-                'app_name': 'Ping Delay V3'
+                'app_name': 'ROSZ PING V1'
             })
     
     # Không tìm thấy key
@@ -199,7 +199,7 @@ INDEX_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ping Delay V3 - Cổng kích hoạt chính thức</title>
+    <title>ROSZ PING V1 - Cổng kích hoạt chính thức</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -289,7 +289,7 @@ INDEX_HTML = """
 <body>
     <div class="hero">
         <div class="badge">⚡ CHÍNH THỨC | VERIFIED</div>
-        <h1>Ping Delay V3</h1>
+        <h1>ROSZ PING V1</h1>
         <div class="sub">Hệ thống kích hoạt bản quyền tự động<br>Bảo mật - Nhanh chóng - Uy tín</div>
         <a href="/Getkey.php" class="btn-primary">
             🚀 GET KEY NGAY
@@ -311,7 +311,7 @@ MAIN_WEB_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lấy Key - Ping Delay V3</title>
+    <title>Lấy Key - ROSZ PING V1</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -455,7 +455,7 @@ SUCCESS_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Thành Công - Ping Delay V3</title>
+    <title>Thành Công - ROSZ PING V1</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -558,7 +558,7 @@ SUCCESS_HTML = """
         
         <div class="warning">
             ⏰ Key có hiệu lực trong 24 giờ<br>
-            📱 Nhập mã vào ứng dụng Ping Delay V3 để kích hoạt
+            📱 Nhập mã vào ứng dụng ROSZ PING để kích hoạt
         </div>
         
         <a href="/download/latest" class="btn-download">
@@ -590,7 +590,7 @@ ERROR_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lỗi - Ping Delay V3</title>
+    <title>Lỗi - ROSZ PING V1</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
