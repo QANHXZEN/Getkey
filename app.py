@@ -32,7 +32,8 @@ def save_data(data):
 
 # Thư mục để bạn bỏ file APK vào phục vụ việc tải xuống
 APK_FOLDER = os.path.join(app.root_path, 'downloads')
-os.makedirs(APK_FOLDER, ignore_ok=True)
+if not os.path.exists(APK_FOLDER):
+    os.makedirs(APK_FOLDER, exist_ok=True)
 
 
 @app.route('/')
