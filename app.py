@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 # Đặt secret key cố định để tránh mất session của user khi Render khởi động lại
-app.secret_key = os.environ.get('SECRET_KEY', 'secret_key_bao_mat_mac_dinh_123')
+app.secret_key = os.environ.get('SECRET_KEY', 'Qanhno1Vippro')
 
 # Cấu hình Link4M
 LINK4M_API_KEY = os.environ.get("LINK4M_API_KEY", "65c47d157fbdff4d79625e57")
@@ -18,19 +18,20 @@ YOUR_DOMAIN = os.environ.get('YOUR_DOMAIN', 'http://localhost:5000')
 DATA_FILE = "temp_keys.json"
 
 def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+    # FIX LỖI HÌNH 2: Nếu file không tồn tại hoặc bị trống, tự động tạo mới dữ liệu trống thay vì báo lỗi sập nguồn
+    if not os.path.exists(DATA_FILE) or os.path.getsize(DATA_FILE) == 0:
+        return {}
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 def save_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Thư mục để bạn bỏ file APK vào phục vụ việc tải xuống
+# Thư mục chứa file APK phục vụ việc tải xuống
 APK_FOLDER = os.path.join(app.root_path, 'downloads')
 if not os.path.exists(APK_FOLDER):
     os.makedirs(APK_FOLDER, exist_ok=True)
@@ -48,7 +49,7 @@ def get_main_web():
 
 @app.route('/generate_free_key', methods=['POST'])
 def generate_free_key():
-    data = request.json
+    data = request.json or {}
     session_id = data.get('session_id')
     
     if not session_id:
@@ -64,7 +65,6 @@ def generate_free_key():
         if res_json.get('status') == 'success' or 'shortenedUrl' in res_json:
             short_url = res_json.get('shortenedUrl')
             
-            # Lưu trạng thái chờ duyệt vào file JSON
             db = load_data()
             db[session_id] = {
                 'status': 'pending',
@@ -80,7 +80,6 @@ def generate_free_key():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Endpoint nhận phản hồi sau khi hoàn thành link rút gọn
 @app.route('/DoneKey.php', methods=['GET'])
 def done_key():
     session_id = request.args.get('session_id')
@@ -90,7 +89,6 @@ def done_key():
         
     db = load_data()
     if session_id in db:
-        # Tạo key ngẫu nhiên dạng KEY-XXXXXXXXXXXX cho App
         activation_key = f"KEY-{uuid.uuid4().hex[:12].upper()}"
         
         db[session_id]['status'] = 'completed'
@@ -102,7 +100,6 @@ def done_key():
     else:
         return render_template_string(ERROR_HTML, message="Phiên làm việc không tồn tại hoặc đã hết hạn!")
 
-# --- API KẾT NỐI VỚI APP APK CỦA BẠN ---
 @app.route('/api/verify_key', methods=['POST'])
 def verify_key():
     req_data = request.json or {}
@@ -113,10 +110,8 @@ def verify_key():
         
     db = load_data()
     
-    # Tìm kiếm key trong file dữ liệu
     for sid, info in db.items():
         if info.get('key') == user_key:
-            # Kiểm tra thời hạn 24 giờ
             expire_at = datetime.fromisoformat(info.get('expire_at'))
             if datetime.now() > expire_at:
                 return jsonify({'status': 'expired', 'message': 'Key này đã hết hạn sử dụng (24h)!'})
@@ -125,25 +120,77 @@ def verify_key():
             
     return jsonify({'status': 'invalid', 'message': 'Mã Key không chính xác hoặc không tồn tại.'})
 
-# Route hỗ trợ tải file APK trực tiếp
 @app.route('/download/<filename>')
 def download_file(filename):
     return send_from_directory(APK_FOLDER, filename, as_attachment=True)
 
 
 # ==========================================
-# GIỮ NGUYÊN 100% CÁC GIAO DIỆN UI GỐC CỦA BẠN
+# GIAO DIỆN HTML ĐÃ ĐƯỢC THIẾT KẾ ĐỒNG BỘ ĐẸP MẮT
 # ==========================================
 
+# FIX HÌNH 1: Làm lại giao diện trang chủ cực kỳ xịn xò, đồng bộ phong cách tối hiện đại
 INDEX_HTML = """
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
-    <title>Trang Chủ</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cổng Xác Thực - Ping Delay V3</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: radial-gradient(ellipse at 30% 40%, #0f172a, #020617);
+            min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+            padding: 1.5rem; color: white;
+        }
+        .card {
+            width: 100%; max-width: 450px;
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8));
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 2rem; padding: 3rem 2.5rem;
+            text-align: center; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .icon-box {
+            width: 72px; height: 72px;
+            background: linear-gradient(135deg, #a855f7, #6366f1);
+            border-radius: 1.5rem; margin: 0 auto 1.5rem;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 30px rgba(168, 85, 247, 0.4);
+        }
+        .icon-box svg { width: 36px; height: 36px; color: white; }
+        h1 { font-size: 1.8rem; font-weight: 700; margin-bottom: 0.75rem; letter-spacing: -0.025em; }
+        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.6; margin-bottom: 2.5rem; }
+        .btn-portal {
+            display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
+            width: 100%; background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white; text-decoration: none; padding: 1.1rem;
+            border-radius: 1.25rem; font-weight: 600; font-size: 1rem;
+            transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+        }
+        .btn-portal:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3);
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        }
+    </style>
 </head>
-<body style="background:#0f172a; color:white; text-align:center; padding-top:10%;">
-    <h2>Hệ Thống Xác Thực Key</h2>
-    <a href="/Getkey.php" style="color:#3b82f6; font-size:18px;">Đi tới trang lấy Key</a>
+<body>
+    <div class="card">
+        <div class="icon-box">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-2-2m0 0l2-2m-2 2h8m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+        </div>
+        <h1>Hệ Thống Trung Tâm</h1>
+        <p>Chào mừng bạn đến với cổng dịch vụ kích hoạt của ứng dụng Ping Delay V3. Vui lòng bấm vào nút bên dưới để tiếp tục hành trình.</p>
+        <a href="/Getkey.php" class="btn-portal">
+            Vào Trang Lấy Key
+            <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+        </a>
+    </div>
 </body>
 </html>
 """
@@ -162,27 +209,18 @@ MAIN_WEB_HTML = """
             font-family: 'Inter', sans-serif;
             background: radial-gradient(ellipse at 30% 40%, #0f172a, #020617);
             min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.5rem;
+            display: flex; align-items: center; justify-content: center; padding: 1.5rem;
         }
         .container {
-            width: 100%;
-            max-width: 480px;
+            width: 100%; max-width: 480px;
             background: linear-gradient(135deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8));
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 2rem;
-            padding: 2.5rem;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 2rem; padding: 2.5rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
         .header { text-align: center; margin-bottom: 2.5rem; }
         .logo-area {
-            width: 64px; height: 64px;
-            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-            border-radius: 1.25rem;
-            margin: 0 auto 1.25rem;
+            width: 64px; height: 64px; background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            border-radius: 1.25rem; margin: 0 auto 1.25rem;
             display: flex; align-items: center; justify-content: center;
             box-shadow: 0 0 30px rgba(59, 130, 246, 0.4);
         }
@@ -190,25 +228,19 @@ MAIN_WEB_HTML = """
         h1 { color: white; font-size: 1.75rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -0.025em; }
         .subtitle { color: #94a3b8; font-size: 0.95rem; }
         .info-card {
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.04);
-            border-radius: 1.25rem;
-            padding: 1.25rem; margin-bottom: 2rem;
+            background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255, 255, 255, 0.04);
+            border-radius: 1.25rem; padding: 1.25rem; margin-bottom: 2rem;
         }
         .info-item { display: flex; align-items: center; gap: 0.75rem; color: #cbd5e1; font-size: 0.9rem; }
         .info-item svg { width: 20px; height: 20px; color: #3b82f6; flex-shrink: 0; }
         .btn-get {
-            width: 100%;
-            background: linear-gradient(135deg, #3b82f6, #2563eb);
-            color: white; border: none;
-            padding: 1.1rem; border-radius: 1.25rem;
-            font-size: 1rem; font-weight: 600;
-            cursor: pointer; transition: all 0.2s ease;
+            width: 100%; background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white; border: none; padding: 1.1rem; border-radius: 1.25rem;
+            font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.2s ease;
             box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
             display: flex; align-items: center; justify-content: center; gap: 0.5rem;
         }
         .btn-get:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(59, 130, 246, 0.3); background: linear-gradient(135deg, #4f46e5, #3b82f6); }
-        .btn-get:active { transform: translateY(0); }
     </style>
     <script>
         function generateKey() {
@@ -279,41 +311,28 @@ SUCCESS_HTML = """
         body {
             font-family: 'Inter', sans-serif;
             background: radial-gradient(ellipse at 30% 40%, #0f172a, #020617);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.5rem;
+            min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem;
         }
         .success-card {
-            max-width: 450px; width: 100%;
-            background: linear-gradient(135deg, #1e293b, #0f172a);
-            border-radius: 2rem;
-            padding: 2.5rem; text-align: center;
-            border: 1px solid rgba(74, 222, 128, 0.2);
+            max-width: 450px; width: 100%; background: linear-gradient(135deg, #1e293b, #0f172a);
+            border-radius: 2rem; padding: 2.5rem; text-align: center; border: 1px solid rgba(74, 222, 128, 0.2);
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
         .success-icon {
             width: 64px; height: 64px; background: rgba(74, 222, 128, 0.1);
-            border-radius: 50%; margin: 0 auto 1.5rem;
-            display: flex; align-items: center; justify-content: center;
-            color: #4ade80;
+            border-radius: 50%; margin: 0 auto 1.5rem; display: flex; align-items: center; justify-content: center; color: #4ade80;
         }
         h2 { color: white; font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; }
         p { color: #94a3b8; font-size: 0.95rem; margin-bottom: 2rem; line-height: 1.5; }
         .key-container {
             background: #0f172a; border: 1px dashed rgba(74, 222, 128, 0.4);
-            border-radius: 1rem; padding: 1.2rem;
-            font-family: monospace; font-size: 1.25rem; font-weight: 700;
-            color: #4ade80; letter-spacing: 2px;
-            margin-bottom: 1.5rem; position: relative; word-break: break-all;
+            border-radius: 1rem; padding: 1.2rem; font-family: monospace; font-size: 1.25rem; font-weight: 700;
+            color: #4ade80; letter-spacing: 2px; margin-bottom: 1.5rem; word-break: break-all;
         }
         .copy-hint { font-size: 0.8rem; color: #64748b; margin-top: -0.5rem; margin-bottom: 2rem; }
         .btn-download {
-            display: inline-flex; align-items: center; gap: 0.5rem;
-            background: #3b82f6; color: white; text-decoration: none;
-            padding: 0.9rem 1.75rem; border-radius: 1rem;
-            font-weight: 600; font-size: 0.95rem; transition: all 0.2s;
+            display: inline-flex; align-items: center; gap: 0.5rem; background: #3b82f6; color: white; text-decoration: none;
+            padding: 0.9rem 1.75rem; border-radius: 1rem; font-weight: 600; font-size: 0.95rem; transition: all 0.2s;
         }
         .btn-download:hover { background: #2563eb; transform: translateY(-1px); }
     </style>
@@ -347,29 +366,20 @@ ERROR_HTML = """
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Inter', sans-serif;
-            background: radial-gradient(ellipse at 30% 40%, #0f172a, #020617);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 1.5rem;
+            font-family: 'Inter', sans-serif; background: radial-gradient(ellipse at 30% 40%, #0f172a, #020617);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem;
         }
         .error-card {
-            max-width: 450px; width: 100%;
-            background: linear-gradient(135deg, #1e293b, #0f172a);
-            border-radius: 2rem;
-            padding: 2.5rem; text-align: center;
-            border: 1px solid rgba(239, 68, 68, 0.3);
+            max-width: 450px; width: 100%; background: linear-gradient(135deg, #1e293b, #0f172a);
+            border-radius: 2rem; padding: 2.5rem; text-align: center; border: 1px solid rgba(239, 68, 68, 0.3);
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
         .error-icon { color: #f87171; font-size: 3.5rem; margin-bottom: 1rem; }
         h2 { color: #f87171; font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem; }
         p { color: #94a3b8; font-size: 0.95rem; margin-bottom: 2rem; }
         .back-btn {
-            display: inline-block; background: #3b82f6; color: white;
-            text-decoration: none; padding: 0.8rem 1.5rem; border-radius: 1rem;
-            font-weight: 600; transition: all 0.2s;
+            display: inline-block; background: #3b82f6; color: white; text-decoration: none;
+            padding: 0.8rem 1.5rem; border-radius: 1rem; font-weight: 600; transition: all 0.2s;
         }
         .back-btn:hover { background: #2563eb; }
     </style>
