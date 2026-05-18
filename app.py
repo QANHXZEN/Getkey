@@ -1,580 +1,595 @@
-package com.dragon.pingx;
+from flask import Flask, render_template, request, jsonify, session
+import requests
+import uuid
+import os
+import json
+import random
+import string
+from datetime import datetime, timedelta
 
-import android.app.Activity;
-import android.app.AlertDialog;
-import android.app.ProgressDialog;
-import android.content.Intent;
-import android.content.SharedPreferences;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
-import android.net.Uri;
-import android.os.Bundle;
-import android.os.Handler;
-import android.view.Gravity;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.animation.Animation;
-import android.view.animation.TranslateAnimation;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.LinearLayout;
-import android.widget.TextView;
-import android.widget.Toast;
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
 
-import org.json.JSONObject;
+# ========== CẤU HÌNH ==========
+LINK4M_API_KEY = os.environ.get("LINK4M_API_KEY", "65c47d157fbdff4d79625e57")
+LINK4M_API_URL = "https://link4m.co/api-shorten/v2"
+YOUR_DOMAIN = os.environ.get("YOUR_DOMAIN", "https://roszmodxqanhno1.onrender.com")
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.Timer;
-import java.util.TimerTask;
+DATA_FILE = "dragon_keys.json"
 
-public class MainActivity extends Activity {
+# ========== HÀM XỬ LÝ ==========
+def load_keys():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    try:
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_keys(data):
+    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def generate_dragon_key():
+    """Tạo key dạng DRP-XXXXXX-XXXX (10 chữ số ngẫu nhiên)"""
+    chars = string.ascii_uppercase + string.digits
+    # Phần đầu 6 ký tự
+    part1 = ''.join(random.choices(chars, k=6))
+    # Phần sau 4 ký tự
+    part2 = ''.join(random.choices(chars, k=4))
+    return f"DRP-{part1}-{part2}"
+
+def clean_expired_keys():
+    """Xóa key hết hạn"""
+    keys = load_keys()
+    now = datetime.now()
+    expired = []
+    for key, info in keys.items():
+        if key.startswith("DRP-"):
+            try:
+                expires = datetime.fromisoformat(info.get('expires_at', ''))
+                if now > expires:
+                    expired.append(key)
+            except:
+                expired.append(key)
+    for key in expired:
+        del keys[key]
+    if expired:
+        save_keys(keys)
+
+# ========== ROUTE ==========
+@app.route('/')
+def index():
+    return render_template_string(INDEX_HTML)
+
+@app.route('/getkey')
+def getkey():
+    session_id = str(uuid.uuid4())
+    session['session_id'] = session_id
+    return render_template_string(GETKEY_HTML, session_id=session_id)
+
+@app.route('/generate_task', methods=['POST'])
+def generate_task():
+    data = request.json
+    session_id = data.get('session_id')
     
-    private boolean isRunning = false;
-    private Timer pingTimer;
-    private int pingCount = 0;
-    private Handler handler = new Handler();
-    private boolean isBypassed = false;
+    if not session_id:
+        return jsonify({'success': False, 'error': 'Invalid session'}), 400
     
-    private LinearLayout loginScreen;
-    private LinearLayout mainScreen;
+    callback_url = f"{YOUR_DOMAIN}/donekey?session_id={session_id}"
     
-    private EditText edtKey;
-    private TextView tvError;
-    private TextView tvStatus;
-    private TextView tvUptime;
-    private TextView tvUserCount;
-    private TextView tvSupport;
-    private Button btnAction;
-    private Button btnBypass;
-    private ProgressDialog progressDialog;
+    try:
+        params = {'api': LINK4M_API_KEY, 'url': callback_url}
+        response = requests.get(LINK4M_API_URL, params=params, timeout=10)
+        result = response.json()
+        task_url = result.get('shortenedUrl', callback_url)
+    except:
+        task_url = callback_url
     
-    // API URL - DOMAIN RENDER CỦA BẠN
-    private static final String API_URL = "https://roszmodxqanhno1.onrender.com/api/verify";
-    private static final String WEB_URL = "https://roszmodxqanhno1.onrender.com/";
+    keys = load_keys()
+    keys[session_id] = {
+        'type': 'pending',
+        'created_at': datetime.now().isoformat(),
+        'status': 'waiting'
+    }
+    save_keys(keys)
     
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        
-        // Root layout - nền đen
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFF000000);
-        root.setGravity(Gravity.CENTER);
-        root.setPadding(30, 50, 30, 50);
-        
-        // ========== MÀN HÌNH LOGIN ==========
-        loginScreen = new LinearLayout(this);
-        loginScreen.setOrientation(LinearLayout.VERTICAL);
-        loginScreen.setGravity(Gravity.CENTER);
-        loginScreen.setVisibility(View.VISIBLE);
-        
-        // Title Premium
-        TextView tvTitle = new TextView(this);
-        tvTitle.setText("✦ DRAGON PINGX V1 PREMIUM ✦");
-        tvTitle.setTextSize(24);
-        tvTitle.setTextColor(0xFFB000FF);
-        tvTitle.setGravity(Gravity.CENTER);
-        tvTitle.setTypeface(null, Typeface.BOLD);
-        tvTitle.setPadding(0, 0, 0, 10);
-        tvTitle.setShadowLayer(15, 0, 0, 0xFFB000FF);
-        
-        // Verified
-        TextView tvVerified = new TextView(this);
-        tvVerified.setText("◈ CHÍNH THỨC | VERIFIED ◈");
-        tvVerified.setTextSize(12);
-        tvVerified.setTextColor(0xFFB000FF);
-        tvVerified.setGravity(Gravity.CENTER);
-        tvVerified.setPadding(0, 0, 0, 40);
-        
-        // Mô tả
-        TextView tvDesc = new TextView(this);
-        tvDesc.setText("⚡ Hệ thống kích hoạt bản quyền tự động");
-        tvDesc.setTextSize(14);
-        tvDesc.setTextColor(0xFF888888);
-        tvDesc.setGravity(Gravity.CENTER);
-        tvDesc.setPadding(0, 0, 0, 50);
-        
-        // Ô nhập key
-        edtKey = new EditText(this);
-        edtKey.setHint("🔑 NHẬP KEY BẢN QUYỀN");
-        edtKey.setTextSize(16);
-        edtKey.setTextColor(0xFFB000FF);
-        edtKey.setHintTextColor(0xFF444444);
-        edtKey.setGravity(Gravity.CENTER);
-        edtKey.setPadding(50, 30, 50, 30);
-        
-        GradientDrawable editBg = new GradientDrawable();
-        editBg.setShape(GradientDrawable.RECTANGLE);
-        editBg.setCornerRadius(20);
-        editBg.setColor(0xFF111111);
-        editBg.setStroke(2, 0xFFB000FF);
-        edtKey.setBackground(editBg);
-        
-        // Nút đăng nhập
-        Button btnLogin = createHologramButton("🔓 KÍCH HOẠT →", 0xFFB000FF);
-        btnLogin.setTextSize(16);
-        btnLogin.setPadding(0, 20, 0, 20);
-        
-        // Nút GET KEY
-        Button btnGetKey = createHologramOutlineButton("🎁 GET KEY NGAY", 0xFFB000FF);
-        btnGetKey.setTextSize(14);
-        btnGetKey.setPadding(0, 18, 0, 18);
-        
-        tvError = new TextView(this);
-        tvError.setText("");
-        tvError.setTextColor(0xFFB000FF);
-        tvError.setGravity(Gravity.CENTER);
-        tvError.setTextSize(12);
-        tvError.setPadding(0, 20, 0, 0);
-        
-        loginScreen.addView(tvTitle);
-        loginScreen.addView(tvVerified);
-        loginScreen.addView(tvDesc);
-        loginScreen.addView(edtKey);
-        loginScreen.addView(btnLogin);
-        loginScreen.addView(btnGetKey);
-        loginScreen.addView(tvError);
-        
-        // ========== MÀN HÌNH CHÍNH ==========
-        mainScreen = new LinearLayout(this);
-        mainScreen.setOrientation(LinearLayout.VERTICAL);
-        mainScreen.setGravity(Gravity.CENTER);
-        mainScreen.setVisibility(View.GONE);
-        
-        // Header
-        TextView tvMainTitle = new TextView(this);
-        tvMainTitle.setText("✦ DRAGON PINGX V1 PREMIUM ✦");
-        tvMainTitle.setTextSize(22);
-        tvMainTitle.setTextColor(0xFFB000FF);
-        tvMainTitle.setGravity(Gravity.CENTER);
-        tvMainTitle.setTypeface(null, Typeface.BOLD);
-        tvMainTitle.setPadding(0, 0, 0, 10);
-        tvMainTitle.setShadowLayer(12, 0, 0, 0xFFB000FF);
-        
-        TextView tvMainVerified = new TextView(this);
-        tvMainVerified.setText("◈ CHÍNH THỨC | VERIFIED ◈");
-        tvMainVerified.setTextSize(11);
-        tvMainVerified.setTextColor(0xFFB000FF);
-        tvMainVerified.setGravity(Gravity.CENTER);
-        tvMainVerified.setPadding(0, 0, 0, 30);
-        
-        TextView tvMainDesc = new TextView(this);
-        tvMainDesc.setText("⚡ Hệ thống kích hoạt bản quyền tự động");
-        tvMainDesc.setTextSize(13);
-        tvMainDesc.setTextColor(0xFF888888);
-        tvMainDesc.setGravity(Gravity.CENTER);
-        
-        TextView tvSlogan = new TextView(this);
-        tvSlogan.setText("🔒 Bảo mật | ⚡ Nhanh chóng | ⭐ Uy tín");
-        tvSlogan.setTextSize(11);
-        tvSlogan.setTextColor(0xFF666666);
-        tvSlogan.setGravity(Gravity.CENTER);
-        tvSlogan.setPadding(0, 8, 0, 40);
-        
-        // Nút KHỞI CHẠY
-        btnAction = createHologramButton("▶ KHỞI CHẠY", 0xFFB000FF);
-        btnAction.setTextSize(15);
-        btnAction.setPadding(0, 20, 0, 20);
-        
-        // Nút BYPASS
-        btnBypass = createHologramOutlineButton("🔓 BYPASS", 0xFFB000FF);
-        btnBypass.setTextSize(14);
-        btnBypass.setPadding(0, 18, 0, 18);
-        
-        // Nút THÔNG TIN
-        Button btnInfo = createHologramOutlineButton("ℹ THÔNG TIN", 0xFFB000FF);
-        btnInfo.setTextSize(14);
-        btnInfo.setPadding(0, 18, 0, 18);
-        
-        // TextView trạng thái
-        tvStatus = new TextView(this);
-        tvStatus.setText("⚡ Sẵn sàng");
-        tvStatus.setTextSize(13);
-        tvStatus.setTextColor(0xFFB000FF);
-        tvStatus.setGravity(Gravity.CENTER);
-        tvStatus.setPadding(0, 30, 0, 20);
-        
-        // 3 chỉ số
-        LinearLayout statsRow = new LinearLayout(this);
-        statsRow.setOrientation(LinearLayout.HORIZONTAL);
-        statsRow.setPadding(0, 20, 0, 10);
-        
-        LinearLayout col1 = new LinearLayout(this);
-        col1.setOrientation(LinearLayout.VERTICAL);
-        col1.setGravity(Gravity.CENTER);
-        col1.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        tvSupport = new TextView(this);
-        tvSupport.setText("24/7");
-        tvSupport.setTextSize(20);
-        tvSupport.setTextColor(0xFFB000FF);
-        tvSupport.setTypeface(null, Typeface.BOLD);
-        TextView tvSupportLabel = new TextView(this);
-        tvSupportLabel.setText("Hỗ trợ");
-        tvSupportLabel.setTextSize(11);
-        tvSupportLabel.setTextColor(0xFF666666);
-        col1.addView(tvSupport);
-        col1.addView(tvSupportLabel);
-        
-        LinearLayout col2 = new LinearLayout(this);
-        col2.setOrientation(LinearLayout.VERTICAL);
-        col2.setGravity(Gravity.CENTER);
-        col2.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        tvUserCount = new TextView(this);
-        tvUserCount.setText("1.2k+");
-        tvUserCount.setTextSize(20);
-        tvUserCount.setTextColor(0xFFB000FF);
-        tvUserCount.setTypeface(null, Typeface.BOLD);
-        TextView tvUserLabel = new TextView(this);
-        tvUserLabel.setText("Người dùng");
-        tvUserLabel.setTextSize(11);
-        tvUserLabel.setTextColor(0xFF666666);
-        col2.addView(tvUserCount);
-        col2.addView(tvUserLabel);
-        
-        LinearLayout col3 = new LinearLayout(this);
-        col3.setOrientation(LinearLayout.VERTICAL);
-        col3.setGravity(Gravity.CENTER);
-        col3.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
-        tvUptime = new TextView(this);
-        tvUptime.setText("99.9%");
-        tvUptime.setTextSize(20);
-        tvUptime.setTextColor(0xFFB000FF);
-        tvUptime.setTypeface(null, Typeface.BOLD);
-        TextView tvUptimeLabel = new TextView(this);
-        tvUptimeLabel.setText("Uptime");
-        tvUptimeLabel.setTextSize(11);
-        tvUptimeLabel.setTextColor(0xFF666666);
-        col3.addView(tvUptime);
-        col3.addView(tvUptimeLabel);
-        
-        statsRow.addView(col1);
-        statsRow.addView(col2);
-        statsRow.addView(col3);
-        
-        mainScreen.addView(tvMainTitle);
-        mainScreen.addView(tvMainVerified);
-        mainScreen.addView(tvMainDesc);
-        mainScreen.addView(tvSlogan);
-        mainScreen.addView(btnAction);
-        mainScreen.addView(btnBypass);
-        mainScreen.addView(btnInfo);
-        mainScreen.addView(tvStatus);
-        mainScreen.addView(statsRow);
-        
-        root.addView(loginScreen);
-        root.addView(mainScreen);
-        setContentView(root);
-        
-        // Kiểm tra key đã lưu
-        SharedPreferences prefs = getSharedPreferences("DragonPrefs", MODE_PRIVATE);
-        String savedKey = prefs.getString("user_key", "");
-        
-        if (!savedKey.isEmpty()) {
-            checkKeyFromWeb(savedKey, true);
+    return jsonify({'success': True, 'task_url': task_url})
+
+@app.route('/donekey')
+def donekey():
+    session_id = request.args.get('session_id')
+    
+    if not session_id:
+        return render_template_string(ERROR_HTML, message="Thiếu mã phiên!")
+    
+    keys = load_keys()
+    
+    if session_id not in keys:
+        return render_template_string(ERROR_HTML, message="Phiên không hợp lệ!")
+    
+    if keys[session_id].get('status') == 'completed':
+        return render_template_string(ERROR_HTML, message="Key đã được tạo trước đó!")
+    
+    # Tạo key mới dạng DRP-XXXXXX-XXXX
+    new_key = generate_dragon_key()
+    expires_at = datetime.now() + timedelta(hours=24)
+    
+    keys[session_id]['status'] = 'completed'
+    keys[session_id]['key'] = new_key
+    keys[session_id]['expires_at'] = expires_at.isoformat()
+    
+    # Lưu key vào danh sách key hợp lệ
+    keys[new_key] = {
+        'type': 'license',
+        'created_at': datetime.now().isoformat(),
+        'expires_at': expires_at.isoformat(),
+        'used': False,
+        'session_id': session_id
+    }
+    save_keys(keys)
+    
+    return render_template_string(SUCCESS_HTML, key=new_key, expires="24 giờ")
+
+@app.route('/api/verify', methods=['POST'])
+def verify_key():
+    """API cho app Android kiểm tra key"""
+    data = request.json
+    key = data.get('key', '').strip().upper()
+    
+    if not key:
+        return jsonify({'status': 'error', 'message': 'Vui lòng nhập key!'}), 400
+    
+    clean_expired_keys()
+    keys = load_keys()
+    
+    # Kiểm tra key có tồn tại không
+    if key not in keys:
+        return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
+    
+    info = keys[key]
+    
+    # Kiểm tra hết hạn
+    try:
+        expires_at = datetime.fromisoformat(info.get('expires_at', ''))
+        if datetime.now() > expires_at:
+            return jsonify({'status': 'expired', 'message': 'Key đã hết hạn!'})
+    except:
+        return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
+    
+    # Kiểm tra đã sử dụng chưa
+    if info.get('used', False):
+        return jsonify({'status': 'used', 'message': 'Key đã được sử dụng!'})
+    
+    # Đánh dấu đã sử dụng
+    info['used'] = True
+    info['used_at'] = datetime.now().isoformat()
+    info['device'] = request.headers.get('User-Agent', 'Unknown')
+    save_keys(keys)
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Key hợp lệ!',
+        'key': key,
+        'expires_at': expires_at.isoformat(),
+        'app_name': 'DRAGON PINGX PREMIUM'
+    })
+
+@app.route('/api/check/<key>')
+def check_key(key):
+    """API check nhanh (GET method)"""
+    clean_expired_keys()
+    keys = load_keys()
+    key = key.upper()
+    
+    if key not in keys:
+        return "INVALID"
+    
+    try:
+        expires_at = datetime.fromisoformat(keys[key].get('expires_at', ''))
+        if datetime.now() > expires_at:
+            return "EXPIRED"
+        if keys[key].get('used', False):
+            return "USED"
+        return "VALID"
+    except:
+        return "INVALID"
+
+@app.route('/api/stats')
+def stats():
+    clean_expired_keys()
+    keys = load_keys()
+    valid_keys = 0
+    for k, v in keys.items():
+        if k.startswith("DRP-") and not v.get('used', False):
+            try:
+                if datetime.now() < datetime.fromisoformat(v.get('expires_at', '')):
+                    valid_keys += 1
+            except:
+                pass
+    return jsonify({
+        'total_keys': len([k for k in keys if k.startswith("DRP-")]),
+        'valid_keys': valid_keys,
+        'server_time': datetime.now().isoformat()
+    })
+
+# ========== HTML TEMPLATES ==========
+INDEX_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DRAGON PINGX PREMIUM | Hệ Thống Kích Hoạt Chính Thức</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0a0a, #1a0033, #0a0a0a);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
         }
-        
-        // ĐĂNG NHẬP
-        btnLogin.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                final String key = edtKey.getText().toString().trim().toUpperCase();
-                if (key.isEmpty()) {
-                    tvError.setText("❌ Vui lòng nhập KEY bản quyền!");
-                    tvError.startAnimation(shakeAnimation());
-                } else {
-                    checkKeyFromWeb(key, false);
-                }
-            }
-        });
-        
-        // GET KEY
-        btnGetKey.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(WEB_URL));
-                startActivity(browser);
-            }
-        });
-        
-        // KHỞI CHẠY/DỪNG
-        btnAction.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (!isRunning) {
-                    isRunning = true;
-                    btnAction.setText("⏹ DỪNG");
-                    GradientDrawable newBg = new GradientDrawable();
-                    newBg.setShape(GradientDrawable.RECTANGLE);
-                    newBg.setCornerRadius(35);
-                    newBg.setColor(0xFFB000FF);
-                    btnAction.setBackground(newBg);
-                    tvStatus.setText("🟣 ĐANG PING...");
-                    pingCount = 0;
-                    
-                    pingTimer = new Timer();
-                    pingTimer.schedule(new TimerTask() {
-                        @Override
-                        public void run() {
-                            pingCount++;
-                            handler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    tvStatus.setText("🟣 Đã ping: " + pingCount + " lần");
-                                }
-                            });
-                        }
-                    }, 0, 1000);
-                    Toast.makeText(MainActivity.this, "🚀 Bắt đầu ping!", Toast.LENGTH_SHORT).show();
-                } else {
-                    isRunning = false;
-                    btnAction.setText("▶ KHỞI CHẠY");
-                    GradientDrawable newBg = new GradientDrawable();
-                    newBg.setShape(GradientDrawable.RECTANGLE);
-                    newBg.setCornerRadius(35);
-                    newBg.setColor(0xFFB000FF);
-                    btnAction.setBackground(newBg);
-                    tvStatus.setText("⚫ Đã dừng");
-                    if (pingTimer != null) {
-                        pingTimer.cancel();
-                        pingTimer = null;
-                    }
-                    Toast.makeText(MainActivity.this, "⏹️ Đã dừng ping!", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
-        
-        // BYPASS
-        btnBypass.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (!isBypassed) {
-                    isBypassed = true;
-                    GradientDrawable bypassSuccessBg = new GradientDrawable();
-                    bypassSuccessBg.setShape(GradientDrawable.RECTANGLE);
-                    bypassSuccessBg.setCornerRadius(35);
-                    bypassSuccessBg.setColor(0xFFB000FF);
-                    btnBypass.setBackground(bypassSuccessBg);
-                    btnBypass.setTextColor(0xFFFFFFFF);
-                    btnBypass.setText("✓ ĐÃ BYPASS");
-                    Toast.makeText(MainActivity.this, "✅ Đã bypass thành công!", Toast.LENGTH_LONG).show();
-                } else {
-                    Toast.makeText(MainActivity.this, "🔓 Bạn đã bypass rồi!", Toast.LENGTH_SHORT).show();
-                }
-            }
-        });
-        
-        // THÔNG TIN
-        btnInfo.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
-                builder.setTitle("📱 THÔNG TIN APP");
-                builder.setMessage(
-                    "✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦\n" +
-                    "     🟣 DRAGON PINGX V1 PREMIUM\n" +
-                    "✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦✦\n\n" +
-                    "👑 ADMIN:\n" +
-                    "   ✦ QANHXMOD\n" +
-                    "   ✦ RoszGumball\n" +
-                    "   ✦ StockAnv MOD VIP PRO\n" +
-                    "   ✦ THANHDO BÁ SÀN\n\n" +
-                    "────────────────────────\n" +
-                    "📱 TikTok: @QANHXMOD\n" +
-                    "📨 Telegram: @QANH NO1\n" +
-                    "🌐 Web: roszmodxqanhno1.onrender.com\n" +
-                    "💬 Hỗ trợ: 24/7\n" +
-                    "────────────────────────"
-                );
-                builder.setPositiveButton("ĐÓNG", null);
-                builder.show();
-            }
-        });
-    }
-    
-    // Hàm check key từ web API
-    private void checkKeyFromWeb(final String key, final boolean isAutoCheck) {
-        progressDialog = new ProgressDialog(this);
-        progressDialog.setMessage("🟣 Đang kiểm tra KEY...");
-        progressDialog.setCancelable(false);
-        progressDialog.show();
-        
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    URL url = new URL(API_URL);
-                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                    conn.setRequestMethod("POST");
-                    conn.setRequestProperty("Content-Type", "application/json");
-                    conn.setDoOutput(true);
-                    conn.setConnectTimeout(15000);
-                    conn.setReadTimeout(15000);
-                    
-                    JSONObject json = new JSONObject();
-                    json.put("key", key);
-                    
-                    OutputStream os = conn.getOutputStream();
-                    os.write(json.toString().getBytes("UTF-8"));
-                    os.flush();
-                    os.close();
-                    
-                    int responseCode = conn.getResponseCode();
-                    if (responseCode == HttpURLConnection.HTTP_OK) {
-                        BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                        StringBuilder response = new StringBuilder();
-                        String line;
-                        while ((line = br.readLine()) != null) {
-                            response.append(line);
-                        }
-                        br.close();
-                        
-                        final JSONObject result = new JSONObject(response.toString());
-                        final String status = result.getString("status");
-                        
-                        handler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                progressDialog.dismiss();
-                                
-                                if (status.equals("success")) {
-                                    SharedPreferences prefs = getSharedPreferences("DragonPrefs", MODE_PRIVATE);
-                                    prefs.edit().putString("user_key", key).apply();
-                                    
-                                    loginScreen.setVisibility(View.GONE);
-                                    mainScreen.setVisibility(View.VISIBLE);
-                                    Toast.makeText(MainActivity.this, "✅ Kích hoạt thành công!", Toast.LENGTH_SHORT).show();
-                                } else if (status.equals("expired")) {
-                                    tvError.setText("❌ KEY đã hết hạn! Vui lòng gia hạn.");
-                                    tvError.startAnimation(shakeAnimation());
-                                    if (isAutoCheck) {
-                                        SharedPreferences prefs = getSharedPreferences("DragonPrefs", MODE_PRIVATE);
-                                        prefs.edit().remove("user_key").apply();
-                                    }
-                                } else if (status.equals("used")) {
-                                    tvError.setText("❌ KEY đã được sử dụng!");
-                                    tvError.startAnimation(shakeAnimation());
-                                    if (isAutoCheck) {
-                                        SharedPreferences prefs = getSharedPreferences("DragonPrefs", MODE_PRIVATE);
-                                        prefs.edit().remove("user_key").apply();
-                                    }
-                                } else {
-                                    tvError.setText("❌ KEY không hợp lệ! Vui lòng GET KEY trên web.");
-                                    tvError.startAnimation(shakeAnimation());
-                                    if (isAutoCheck) {
-                                        SharedPreferences prefs = getSharedPreferences("DragonPrefs", MODE_PRIVATE);
-                                        prefs.edit().remove("user_key").apply();
-                                    }
-                                }
-                            }
-                        });
-                    } else {
-                        throw new Exception("Server error");
-                    }
-                    conn.disconnect();
-                    
-                } catch (Exception e) {
-                    handler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            progressDialog.dismiss();
-                            tvError.setText("❌ Không thể kết nối server! Kiểm tra mạng.");
-                            tvError.startAnimation(shakeAnimation());
-                            if (isAutoCheck) {
-                                SharedPreferences prefs = getSharedPreferences("DragonPrefs", MODE_PRIVATE);
-                                prefs.edit().remove("user_key").apply();
-                                loginScreen.setVisibility(View.VISIBLE);
-                                mainScreen.setVisibility(View.GONE);
-                            }
-                        }
-                    });
-                }
-            }
-        }).start();
-    }
-    
-    // Tạo nút hologram tím đặc
-    private Button createHologramButton(String text, int color) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextColor(0xFFFFFFFF);
-        button.setTypeface(null, Typeface.BOLD);
-        button.setAllCaps(false);
-        
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.RECTANGLE);
-        bg.setCornerRadius(35);
-        bg.setColor(color);
-        button.setBackground(bg);
-        
-        button.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        button.setAlpha(0.7f);
-                        break;
-                    case MotionEvent.ACTION_UP:
-                        button.setAlpha(1.0f);
-                        break;
-                }
-                return false;
-            }
-        });
-        
-        return button;
-    }
-    
-    // Tạo nút hologram viền tím
-    private Button createHologramOutlineButton(String text, int color) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setTextColor(color);
-        button.setTypeface(null, Typeface.BOLD);
-        button.setAllCaps(false);
-        
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.RECTANGLE);
-        bg.setCornerRadius(35);
-        bg.setColor(0xFF111111);
-        bg.setStroke(2, color);
-        button.setBackground(bg);
-        
-        button.setOnTouchListener(new View.OnTouchListener() {
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        button.setAlpha(0.7f);
-                        break;
-                    case MotionEvent.ACTION_UP:
-                        button.setAlpha(1.0f);
-                        break;
-                }
-                return false;
-            }
-        });
-        
-        return button;
-    }
-    
-    private Animation shakeAnimation() {
-        TranslateAnimation shake = new TranslateAnimation(0, 10, 0, 0);
-        shake.setDuration(80);
-        shake.setRepeatMode(Animation.REVERSE);
-        shake.setRepeatCount(3);
-        return shake;
-    }
-    
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        if (pingTimer != null) {
-            pingTimer.cancel();
+        .hero { text-align: center; max-width: 600px; animation: fadeInUp 0.8s ease; }
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-    }
-}
+        .badge {
+            display: inline-block;
+            background: rgba(176, 0, 255, 0.15);
+            backdrop-filter: blur(10px);
+            padding: 0.5rem 1.2rem;
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #b000ff;
+            border: 1px solid rgba(176, 0, 255, 0.3);
+            margin-bottom: 2rem;
+        }
+        h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #fff, #b000ff, #ff00ff);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            margin-bottom: 1rem;
+        }
+        .sub { font-size: 1.1rem; color: #888; margin-bottom: 2rem; line-height: 1.6; }
+        .btn-primary {
+            background: linear-gradient(135deg, #b000ff, #ff00ff);
+            border: none;
+            padding: 1rem 2.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: white;
+            border-radius: 60px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+        }
+        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 20px 40px rgba(176, 0, 255, 0.3); }
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 3rem;
+            padding-top: 2rem;
+            border-top: 1px solid rgba(176, 0, 255, 0.2);
+        }
+        .stat-number { font-size: 1.5rem; font-weight: 700; color: #b000ff; }
+        .stat-label { font-size: 0.75rem; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="hero">
+        <div class="badge">⚡ DRAGON PINGX PREMIUM | CHÍNH THỨC</div>
+        <h1>DRAGON PINGX</h1>
+        <div class="sub">Hệ thống kích hoạt bản quyền tự động<br>Bảo mật - Nhanh chóng - Uy tín</div>
+        <a href="/getkey" class="btn-primary">
+            🚀 LẤY KEY NGAY
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7m0 0l-7 7m7-7H3"/></svg>
+        </a>
+        <div class="stats">
+            <div><div class="stat-number">24/7</div><div class="stat-label">Hỗ trợ</div></div>
+            <div><div class="stat-number">1.2k+</div><div class="stat-label">Người dùng</div></div>
+            <div><div class="stat-number">99.9%</div><div class="stat-label">Uptime</div></div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+GETKEY_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lấy Key - DRAGON PINGX PREMIUM</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0a0a, #1a0033, #0a0a0a);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .card {
+            max-width: 480px;
+            width: 100%;
+            background: rgba(26, 0, 51, 0.8);
+            backdrop-filter: blur(20px);
+            border-radius: 2rem;
+            padding: 2rem;
+            border: 1px solid rgba(176, 0, 255, 0.3);
+            animation: fadeIn 0.5s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .icon {
+            width: 70px;
+            height: 70px;
+            background: linear-gradient(135deg, #b000ff, #ff00ff);
+            border-radius: 1.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.5rem;
+        }
+        h2 { color: white; text-align: center; margin-bottom: 0.5rem; }
+        .desc { color: #888; text-align: center; font-size: 0.9rem; margin-bottom: 1.5rem; }
+        .info-box {
+            background: rgba(0,0,0,0.3);
+            border-radius: 1rem;
+            padding: 1rem;
+            margin: 1.5rem 0;
+        }
+        .info-item { display: flex; align-items: center; gap: 0.75rem; color: #b000ff; font-size: 0.85rem; margin-bottom: 0.75rem; }
+        .btn-get {
+            width: 100%;
+            background: linear-gradient(135deg, #b000ff, #ff00ff);
+            border: none;
+            padding: 1rem;
+            border-radius: 1rem;
+            color: white;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-get:hover { transform: translateY(-2px); filter: brightness(1.05); }
+        .btn-get:disabled { opacity: 0.6; cursor: not-allowed; }
+        .loading-spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">
+            <svg width="36" height="36" fill="none" stroke="white" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+            </svg>
+        </div>
+        <h2>DRAGON PINGX PREMIUM</h2>
+        <div class="desc">Hoàn thành nhiệm vụ để nhận key kích hoạt</div>
+        <div class="info-box">
+            <div class="info-item">📌 Key có hiệu lực 24 giờ</div>
+            <div class="info-item">🔒 1 key = 1 thiết bị</div>
+            <div class="info-item">⚡ Kích hoạt ngay sau khi nhận</div>
+        </div>
+        <button class="btn-get" onclick="generateKey()" id="getKeyBtn">🔥 LẤY KEY NGAY</button>
+    </div>
+    <script>
+        const sessionId = '{{ session_id }}';
+        async function generateKey() {
+            const btn = document.getElementById('getKeyBtn');
+            btn.innerHTML = '<span class="loading-spinner"></span> Đang tạo...';
+            btn.disabled = true;
+            try {
+                const response = await fetch('/generate_task', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    window.location.href = data.task_url;
+                } else {
+                    alert('Lỗi: ' + (data.message || 'Không thể tạo link'));
+                    btn.innerHTML = '🔥 LẤY KEY NGAY';
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                alert('Lỗi kết nối! Vui lòng thử lại.');
+                btn.innerHTML = '🔥 LẤY KEY NGAY';
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+
+SUCCESS_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thành Công - DRAGON PINGX PREMIUM</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0a0a, #1a0033, #0a0a0a);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .card {
+            max-width: 500px;
+            width: 100%;
+            background: rgba(26, 0, 51, 0.9);
+            backdrop-filter: blur(20px);
+            border-radius: 2rem;
+            padding: 2rem;
+            text-align: center;
+            border: 1px solid rgba(176, 0, 255, 0.3);
+            animation: bounceIn 0.6s ease;
+        }
+        @keyframes bounceIn {
+            0% { opacity: 0; transform: scale(0.8); }
+            50% { opacity: 1; transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: rgba(176, 0, 255, 0.15);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.5rem;
+        }
+        h2 { color: white; font-size: 1.8rem; margin-bottom: 0.5rem; }
+        .desc { color: #888; margin-bottom: 1.5rem; }
+        .key-box {
+            background: #0a0a0a;
+            border-radius: 1rem;
+            padding: 1.2rem;
+            margin: 1.5rem 0;
+            border: 1px dashed #b000ff;
+        }
+        .key-label { font-size: 0.7rem; color: #b000ff; text-transform: uppercase; letter-spacing: 1px; }
+        .key-value {
+            font-family: monospace;
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #b000ff;
+            word-break: break-all;
+            margin: 0.5rem 0;
+        }
+        .copy-btn {
+            background: rgba(176, 0, 255, 0.2);
+            border: 1px solid #b000ff;
+            padding: 0.5rem 1.2rem;
+            border-radius: 2rem;
+            color: #b000ff;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .warning { font-size: 0.7rem; color: #666; margin: 1rem 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon">
+            <svg width="48" height="48" fill="none" stroke="#b000ff" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+        </div>
+        <h2>Thành Công!</h2>
+        <div class="desc">Bạn đã hoàn thành nhiệm vụ</div>
+        <div class="key-box">
+            <div class="key-label">🔑 KEY KÍCH HOẠT CỦA BẠN</div>
+            <div class="key-value" id="licenseKey">{{ key }}</div>
+            <button class="copy-btn" onclick="copyKey()">📋 Sao chép key</button>
+        </div>
+        <div class="warning">
+            ⏰ Key có hiệu lực trong {{ expires }}<br>
+            📱 Nhập key vào ứng dụng DRAGON PINGX để kích hoạt
+        </div>
+    </div>
+    <script>
+        function copyKey() {
+            const key = document.getElementById('licenseKey').innerText;
+            navigator.clipboard.writeText(key).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '✅ Đã sao chép!';
+                setTimeout(() => { btn.innerHTML = originalText; }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>
+"""
+
+ERROR_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lỗi - DRAGON PINGX PREMIUM</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0a0a, #1a0033, #0a0a0a);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .card {
+            max-width: 450px;
+            background: rgba(26, 0, 51, 0.9);
+            backdrop-filter: blur(20px);
+            border-radius: 2rem;
+            padding: 2rem;
+            text-align: center;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .error-icon { font-size: 4rem; margin-bottom: 1rem; }
+        h2 { color: #f87171; margin-bottom: 0.5rem; }
+        p { color: #888; margin-bottom: 1.5rem; }
+        .btn-back {
+            background: linear-gradient(135deg, #b000ff, #ff00ff);
+            color: white;
+            text-decoration: none;
+            padding: 0.8rem 1.5rem;
+            border-radius: 2rem;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="error-icon">⚠️</div>
+        <h2>Đã xảy ra lỗi</h2>
+        <p>{{ message }}</p>
+        <a href="/getkey" class="btn-back">🔄 Thử lại</a>
+    </div>
+</body>
+</html>
+"""
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
