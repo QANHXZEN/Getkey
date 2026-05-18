@@ -13,11 +13,11 @@ app.secret_key = os.urandom(24)
 # ========== CẤU HÌNH ==========
 LINK4M_API_KEY = os.environ.get("LINK4M_API_KEY", "65c47d157fbdff4d79625e57")
 LINK4M_API_URL = "https://link4m.co/api-shorten/v2"
-YOUR_DOMAIN = os.environ.get("YOUR_DOMAIN", "https://roszmodxqanhno1.onrender.com")
+YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"  # DOMAIN CỦA BẠN
 
 DATA_FILE = "dragon_keys.json"
 
-# ========== HÀM XỬ LÝ ==========
+# ========== HÀM XỬ LÝ FILE ==========
 def load_keys():
     if not os.path.exists(DATA_FILE):
         return {}
@@ -34,9 +34,7 @@ def save_keys(data):
 def generate_dragon_key():
     """Tạo key dạng DRP-XXXXXX-XXXX (10 chữ số ngẫu nhiên)"""
     chars = string.ascii_uppercase + string.digits
-    # Phần đầu 6 ký tự
     part1 = ''.join(random.choices(chars, k=6))
-    # Phần sau 4 ký tự
     part2 = ''.join(random.choices(chars, k=4))
     return f"DRP-{part1}-{part2}"
 
@@ -521,7 +519,7 @@ SUCCESS_HTML = """
         </div>
         <div class="warning">
             ⏰ Key có hiệu lực trong {{ expires }}<br>
-            📱 Nhập key vào ứng dụng DRAGON PINGX để kích hoạt
+            📱 Nhập key vào ứng dụng DRAGON PINGX PREMIUM để kích hoạt
         </div>
     </div>
     <script>
@@ -592,4 +590,5 @@ ERROR_HTML = """
 """
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
