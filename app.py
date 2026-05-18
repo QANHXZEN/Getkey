@@ -1,23 +1,20 @@
-from flask import Flask, request, jsonify, render_template_string, redirect
+from flask import Flask, request, jsonify, render_template_string
+import requests
 import random
 import string
 from datetime import datetime, timedelta
 import os
 import json
-import threading
-import time
-import requests
 import uuid
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Cấu hình Link4M
-LINK4M_API_KEY = "65c47d157fbdff4d79625e57"
+# ========== CẤU HÌNH ==========
+LINK4M_API_KEY = os.environ.get("LINK4M_API_KEY", "65c47d157fbdff4d79625e57")
 LINK4M_API_URL = "https://link4m.co/api-shorten/v2"
 YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"
 
-# File lưu key
 DATA_FILE = "keys.json"
 
 def load_keys():
@@ -39,7 +36,12 @@ def generate_dragon_key():
     part2 = ''.join(random.choices(chars, k=4))
     return f"DRP-{part1}-{part2}"
 
-# ========== HTML TEMPLATES ==========
+ADMIN_KEYS = ["QanhNo1Cracker", "Dragonlocut"]
+
+# Dictionary lưu session tạm (dùng dict thay vì file để tránh lỗi ghi file)
+sessions = {}
+
+# ========== UI TRANG CHỦ ==========
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -83,7 +85,7 @@ INDEX_HTML = """
             background-clip: text;
             -webkit-background-clip: text;
             color: transparent;
-            margin-bottom: 1rem;
+            margin-bottom: 0.5rem;
         }
         .sub { font-size: 1.1rem; color: #888; margin-bottom: 2rem; line-height: 1.6; }
         .btn-primary {
@@ -110,6 +112,7 @@ INDEX_HTML = """
             padding-top: 2rem;
             border-top: 1px solid rgba(176,0,255,0.2);
         }
+        .stat-item { text-align: center; }
         .stat-number { font-size: 1.5rem; font-weight: 700; color: #b000ff; }
         .stat-label { font-size: 0.75rem; color: #666; }
     </style>
@@ -124,15 +127,16 @@ INDEX_HTML = """
             <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7m0 0l-7 7m7-7H3"/></svg>
         </a>
         <div class="stats">
-            <div><div class="stat-number">24/7</div><div class="stat-label">Hỗ trợ</div></div>
-            <div><div class="stat-number">1.2k+</div><div class="stat-label">Người dùng</div></div>
-            <div><div class="stat-number">99.9%</div><div class="stat-label">Uptime</div></div>
+            <div class="stat-item"><div class="stat-number">24/7</div><div class="stat-label">Hỗ trợ</div></div>
+            <div class="stat-item"><div class="stat-number">1.2k+</div><div class="stat-label">Người dùng</div></div>
+            <div class="stat-item"><div class="stat-number">99.9%</div><div class="stat-label">Uptime</div></div>
         </div>
     </div>
 </body>
 </html>
 """
 
+# ========== UI LẤY KEY ==========
 GETKEY_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -153,7 +157,7 @@ GETKEY_HTML = """
             padding: 1.5rem;
         }
         .card {
-            max-width: 500px;
+            max-width: 480px;
             width: 100%;
             background: rgba(15, 23, 42, 0.7);
             backdrop-filter: blur(20px);
@@ -163,10 +167,7 @@ GETKEY_HTML = """
             box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
             animation: fadeIn 0.5s ease;
         }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
-        }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         .icon {
             width: 70px;
             height: 70px;
@@ -218,7 +219,8 @@ GETKEY_HTML = """
             border-left: 3px solid #b000ff;
             display: none;
         }
-        .result-box.show { display: block; }
+        .result-box.show { display: block; animation: slideUp 0.4s ease; }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .key-display {
             background: #0f172a;
             padding: 0.75rem;
@@ -252,32 +254,44 @@ GETKEY_HTML = """
             </svg>
         </div>
         <h2>DRAGON PINGX PREMIUM</h2>
-        <div class="desc">Hoàn thành nhiệm vụ bên dưới để nhận key</div>
+        <div class="desc">Nhận key kích hoạt bản quyền ngay hôm nay</div>
+        
         <div class="info-box">
             <div class="info-item">📌 Key có hiệu lực 24 giờ</div>
-            <div class="info-item">🔒 1 key = 1 thiết bị</div>
+            <div class="info-item">🔒 1 key = 1 thiết bị duy nhất</div>
             <div class="info-item">⚡ Kích hoạt ngay sau khi nhận</div>
+            <div class="info-item">💎 Hỗ trợ 24/7</div>
         </div>
-        <button class="btn-get" onclick="generateTask()" id="getKeyBtn">🔥 BẮT ĐẦU NHIỆM VỤ</button>
+        
+        <button class="btn-get" onclick="generateKey()" id="getKeyBtn">🔥 LẤY KEY NGAY</button>
+        
         <div id="resultBox" class="result-box">
             <div id="resultContent"></div>
         </div>
-        <div class="footer-note">© 2025 DRAGON PINGX PREMIUM • Bảo mật tuyệt đối</div>
+        
+        <div class="footer-note">
+            © 2025 DRAGON PINGX PREMIUM • Bảo mật tuyệt đối
+        </div>
     </div>
+    
     <script>
         let sessionId = null;
+        let checkInterval = null;
         
-        async function generateTask() {
-            const btn = document.getElementById('getKeyBtn');
-            const resultBox = document.getElementById('resultBox');
-            const resultContent = document.getElementById('resultContent');
-            
-            // Tạo session ID
-            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
                 const r = Math.random() * 16 | 0;
                 const v = c === 'x' ? r : (r & 0x3 | 0x8);
                 return v.toString(16);
             });
+        }
+        
+        async function generateKey() {
+            const btn = document.getElementById('getKeyBtn');
+            const resultBox = document.getElementById('resultBox');
+            const resultContent = document.getElementById('resultContent');
+            
+            sessionId = generateUUID();
             
             btn.innerHTML = '<span class="loading-spinner"></span> Đang tạo nhiệm vụ...';
             btn.disabled = true;
@@ -296,51 +310,51 @@ GETKEY_HTML = """
                             <div style="color:#b000ff; margin-bottom:10px;">✅ NHIỆM VỤ ĐÃ SẴN SÀNG</div>
                             <div style="font-size:0.85rem; margin:10px 0;">📌 Bấm vào link bên dưới để hoàn thành nhiệm vụ:</div>
                             <a href="${data.task_url}" target="_blank" style="color:#b000ff; word-break:break-all; display:block; margin:10px 0;">🔗 ${data.task_url}</a>
-                            <div style="font-size:0.7rem; color:#64748b; margin-top:10px;">⏳ Sau khi hoàn thành, key sẽ tự động hiển thị</div>
+                            <div style="font-size:0.7rem; color:#64748b; margin-top:10px;">⏳ Sau khi hoàn thành, key sẽ tự động hiển thị bên dưới</div>
                             <div id="waitingKey" style="margin-top:15px;"><span class="loading-spinner"></span> Đang chờ xác nhận...</div>
                         </div>
                     `;
                     resultBox.classList.add('show');
                     
-                    // Mở link task trong tab mới
                     window.open(data.task_url, '_blank');
-                    
-                    // Bắt đầu kiểm tra key
                     startChecking();
                 } else {
-                    alert('Lỗi: ' + data.message);
+                    alert('Lỗi: ' + (data.message || 'Không thể tạo link'));
+                    btn.innerHTML = '🔥 LẤY KEY NGAY';
+                    btn.disabled = false;
                 }
             } catch (error) {
                 alert('Lỗi kết nối! Vui lòng thử lại.');
-            } finally {
-                btn.innerHTML = '🔥 BẮT ĐẦU NHIỆM VỤ';
+                btn.innerHTML = '🔥 LẤY KEY NGAY';
                 btn.disabled = false;
             }
         }
         
         function startChecking() {
+            if (checkInterval) clearInterval(checkInterval);
+            
             let checkCount = 0;
-            const interval = setInterval(async () => {
+            checkInterval = setInterval(async () => {
                 checkCount++;
                 try {
                     const response = await fetch(`/api/check_task/${sessionId}`);
                     const data = await response.json();
                     
                     if (data.completed && data.key) {
-                        clearInterval(interval);
+                        clearInterval(checkInterval);
                         const waitingDiv = document.getElementById('waitingKey');
                         if (waitingDiv) {
                             waitingDiv.innerHTML = `
                                 <div style="background:#b000ff20; padding:0.75rem; border-radius:0.5rem; margin-top:0.5rem;">
                                     <div style="color:#b000ff; font-weight:600;">🎉 KEY CỦA BẠN ĐÃ SẴN SÀNG!</div>
-                                    <div class="key-display" style="margin-top:10px;">${data.key}</div>
-                                    <button class="copy-btn" onclick="copyKey('${data.key}')">📋 Sao chép key</button>
-                                    <div style="font-size:0.7rem; color:#64748b; margin-top:10px;">⏰ Hạn: 24 giờ</div>
+                                    <div class="key-display" id="licenseKey">${data.key}</div>
+                                    <button class="copy-btn" onclick="copyKey()">📋 Sao chép key</button>
+                                    <div style="font-size:0.7rem; color:#64748b; margin-top:10px;">⏰ Hạn sử dụng: 24 giờ</div>
                                 </div>
                             `;
                         }
                     } else if (checkCount > 60) {
-                        clearInterval(interval);
+                        clearInterval(checkInterval);
                         const waitingDiv = document.getElementById('waitingKey');
                         if (waitingDiv) {
                             waitingDiv.innerHTML = '<div style="color:#ff4444;">⏰ Hết thời gian chờ. Vui lòng thử lại.</div>';
@@ -352,7 +366,8 @@ GETKEY_HTML = """
             }, 3000);
         }
         
-        function copyKey(key) {
+        function copyKey() {
+            const key = document.getElementById('licenseKey').innerText;
             navigator.clipboard.writeText(key).then(() => {
                 alert('✅ Đã sao chép key: ' + key);
             });
@@ -479,10 +494,59 @@ SUCCESS_HTML = """
 </html>
 """
 
-# ========== API ROUTES ==========
+ERROR_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lỗi - DRAGON PINGX PREMIUM</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: radial-gradient(ellipse at 20% 30%, #0a0a0a, #05050a);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .card {
+            max-width: 450px;
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(20px);
+            border-radius: 2rem;
+            padding: 2rem;
+            text-align: center;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+        .error-icon { font-size: 4rem; margin-bottom: 1rem; }
+        h2 { color: #f87171; margin-bottom: 0.5rem; }
+        p { color: #888; margin-bottom: 1.5rem; }
+        .btn-back {
+            background: linear-gradient(135deg, #b000ff, #ff00ff);
+            color: white;
+            text-decoration: none;
+            padding: 0.8rem 1.5rem;
+            border-radius: 2rem;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="error-icon">⚠️</div>
+        <h2>Đã xảy ra lỗi</h2>
+        <p>{{ message }}</p>
+        <a href="/getkey" class="btn-back">🔄 Thử lại</a>
+    </div>
+</body>
+</html>
+"""
 
-# Lưu session tạm thời
-sessions = {}
+# ========== API ROUTES ==========
 
 @app.route('/')
 def index():
@@ -494,115 +558,155 @@ def getkey():
 
 @app.route('/api/create_task', methods=['POST'])
 def create_task():
-    data = request.json
-    session_id = data.get('session_id')
-    
-    if not session_id:
-        return jsonify({'success': False, 'message': 'Invalid session'})
-    
-    callback_url = f"{YOUR_DOMAIN}/donekey.php?session_id={session_id}"
-    
     try:
-        params = {'api': LINK4M_API_KEY, 'url': callback_url}
-        response = requests.get(LINK4M_API_URL, params=params, timeout=10)
-        result = response.json()
-        task_url = result.get('shortenedUrl', callback_url)
-    except:
-        task_url = callback_url
-    
-    # Lưu session
-    sessions[session_id] = {
-        'status': 'pending',
-        'created_at': datetime.now().isoformat()
-    }
-    
-    return jsonify({'success': True, 'task_url': task_url})
+        data = request.json
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'success': False, 'message': 'Invalid session'}), 400
+        
+        # Tạo callback URL
+        callback_url = f"{YOUR_DOMAIN}/api/callback?session_id={session_id}"
+        
+        # Gọi link4m
+        try:
+            params = {'api': LINK4M_API_KEY, 'url': callback_url}
+            response = requests.get(LINK4M_API_URL, params=params, timeout=10)
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('status') == 'success' and result.get('shortenedUrl'):
+                    task_url = result.get('shortenedUrl')
+                else:
+                    task_url = callback_url
+            else:
+                task_url = callback_url
+        except Exception as e:
+            print(f"Link4m error: {e}")
+            task_url = callback_url
+        
+        # Lưu session
+        sessions[session_id] = {
+            'status': 'pending',
+            'created_at': datetime.now().isoformat()
+        }
+        
+        return jsonify({'success': True, 'task_url': task_url})
+        
+    except Exception as e:
+        print(f"Create task error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/check_task/<session_id>')
 def check_task(session_id):
-    if session_id in sessions and sessions[session_id].get('status') == 'completed':
-        return jsonify({
-            'completed': True,
-            'key': sessions[session_id].get('key')
-        })
-    return jsonify({'completed': False})
+    try:
+        if session_id in sessions and sessions[session_id].get('status') == 'completed':
+            return jsonify({
+                'completed': True,
+                'key': sessions[session_id].get('key')
+            })
+        return jsonify({'completed': False})
+    except Exception as e:
+        return jsonify({'completed': False, 'error': str(e)})
 
-@app.route('/donekey.php')
-def donekey():
-    session_id = request.args.get('session_id')
-    
-    if not session_id:
-        return render_template_string(ERROR_HTML, message="Thiếu mã phiên!")
-    
-    if session_id not in sessions:
-        return render_template_string(ERROR_HTML, message="Phiên không hợp lệ!")
-    
-    if sessions[session_id].get('status') == 'completed':
-        return render_template_string(ERROR_HTML, message="Key đã được tạo!")
-    
-    # Tạo key mới
-    new_key = generate_dragon_key()
-    expires_at = datetime.now() + timedelta(hours=24)
-    
-    # Lưu key
-    keys = load_keys()
-    keys[new_key] = {
-        'expires_at': expires_at.isoformat(),
-        'used': False,
-        'created_at': datetime.now().isoformat(),
-        'session_id': session_id
-    }
-    save_keys(keys)
-    
-    # Cập nhật session
-    sessions[session_id]['status'] = 'completed'
-    sessions[session_id]['key'] = new_key
-    sessions[session_id]['expires_at'] = expires_at.isoformat()
-    
-    return render_template_string(SUCCESS_HTML, key=new_key, expires="24 giờ")
+@app.route('/api/callback')
+def callback():
+    try:
+        session_id = request.args.get('session_id')
+        
+        if not session_id:
+            return render_template_string(ERROR_HTML, message="Thiếu mã phiên!")
+        
+        if session_id not in sessions:
+            return render_template_string(ERROR_HTML, message="Phiên không hợp lệ!")
+        
+        if sessions[session_id].get('status') == 'completed':
+            return render_template_string(ERROR_HTML, message="Key đã được tạo trước đó!")
+        
+        # Tạo key mới
+        new_key = generate_dragon_key()
+        expires_at = datetime.now() + timedelta(hours=24)
+        
+        # Lưu key vào file
+        keys = load_keys()
+        keys[new_key] = {
+            'expires_at': expires_at.isoformat(),
+            'used': False,
+            'created_at': datetime.now().isoformat(),
+            'session_id': session_id
+        }
+        save_keys(keys)
+        
+        # Cập nhật session
+        sessions[session_id]['status'] = 'completed'
+        sessions[session_id]['key'] = new_key
+        sessions[session_id]['expires_at'] = expires_at.isoformat()
+        
+        return render_template_string(SUCCESS_HTML, key=new_key, expires="24 giờ")
+        
+    except Exception as e:
+        print(f"Callback error: {e}")
+        return render_template_string(ERROR_HTML, message=f"Lỗi: {str(e)}")
 
 @app.route('/api/verify', methods=['POST'])
 def verify_key():
-    data = request.json
-    key = data.get('key', '').strip().upper()
-    
-    if not key:
-        return jsonify({'status': 'error', 'message': 'Vui lòng nhập key!'})
-    
-    keys = load_keys()
-    
-    if key not in keys:
-        return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
-    
-    info = keys[key]
-    expires_at = datetime.fromisoformat(info['expires_at'])
-    
-    if datetime.now() > expires_at:
-        return jsonify({'status': 'expired', 'message': 'Key đã hết hạn!'})
-    
-    if info.get('used', False):
-        return jsonify({'status': 'used', 'message': 'Key đã được sử dụng!'})
-    
-    info['used'] = True
-    info['used_at'] = datetime.now().isoformat()
-    save_keys(keys)
-    
-    return jsonify({
-        'status': 'success',
-        'message': 'Key hợp lệ!',
-        'key': key,
-        'expires_at': expires_at.isoformat(),
-        'app_name': 'DRAGON PINGX PREMIUM'
-    })
+    try:
+        data = request.json
+        key = data.get('key', '').strip().upper()
+        
+        if not key:
+            return jsonify({'status': 'error', 'message': 'Vui lòng nhập key!'})
+        
+        # Kiểm tra key admin
+        if key in ADMIN_KEYS:
+            return jsonify({
+                'status': 'success',
+                'message': 'Admin Key! Kích hoạt thành công!',
+                'key': key,
+                'expires_at': (datetime.now() + timedelta(days=365)).isoformat(),
+                'app_name': 'DRAGON PINGX PREMIUM'
+            })
+        
+        keys = load_keys()
+        
+        if key not in keys:
+            return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
+        
+        info = keys[key]
+        expires_at = datetime.fromisoformat(info['expires_at'])
+        
+        if datetime.now() > expires_at:
+            return jsonify({'status': 'expired', 'message': 'Key đã hết hạn!'})
+        
+        if info.get('used', False):
+            return jsonify({'status': 'used', 'message': 'Key đã được sử dụng!'})
+        
+        info['used'] = True
+        info['used_at'] = datetime.now().isoformat()
+        save_keys(keys)
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Key hợp lệ!',
+            'key': key,
+            'expires_at': expires_at.isoformat(),
+            'app_name': 'DRAGON PINGX PREMIUM'
+        })
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/check/<key>')
 def check_key(key):
-    key = key.upper()
-    keys = load_keys()
-    if key not in keys:
-        return "INVALID"
-    info = keys[key]
     try:
+        key = key.upper()
+        
+        if key in ADMIN_KEYS:
+            return "VALID"
+        
+        keys = load_keys()
+        if key not in keys:
+            return "INVALID"
+        info = keys[key]
         expires_at = datetime.fromisoformat(info['expires_at'])
         if datetime.now() > expires_at:
             return "EXPIRED"
@@ -614,34 +718,24 @@ def check_key(key):
 
 @app.route('/api/stats')
 def stats():
-    keys = load_keys()
-    total = len([k for k in keys if k.startswith("DRP-")])
-    valid = 0
-    for k, v in keys.items():
-        if k.startswith("DRP-") and not v.get('used', False):
-            try:
-                if datetime.now() < datetime.fromisoformat(v['expires_at']):
-                    valid += 1
-            except:
-                pass
-    return jsonify({
-        'total_keys': total,
-        'valid_keys': valid,
-        'server_time': datetime.now().isoformat()
-    })
-
-# ========== GIỮ WEB 24/7 ==========
-def keep_alive():
-    url = "https://roszmodxqanhno1.onrender.com/api/stats"
-    while True:
-        try:
-            requests.get(url, timeout=10)
-            print(f"✅ Keep-alive ping sent at {datetime.now()}")
-        except Exception as e:
-            print(f"❌ Keep-alive ping failed: {e}")
-        time.sleep(840)
-
-threading.Thread(target=keep_alive, daemon=True).start()
+    try:
+        keys = load_keys()
+        total = len([k for k in keys if k.startswith("DRP-")])
+        valid = 0
+        for k, v in keys.items():
+            if k.startswith("DRP-") and not v.get('used', False):
+                try:
+                    if datetime.now() < datetime.fromisoformat(v['expires_at']):
+                        valid += 1
+                except:
+                    pass
+        return jsonify({
+            'total_keys': total,
+            'valid_keys': valid + len(ADMIN_KEYS),
+            'server_time': datetime.now().isoformat()
+        })
+    except:
+        return jsonify({'total_keys': 0, 'valid_keys': 0})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
