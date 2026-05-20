@@ -26,11 +26,12 @@ YEUMONEY_API_URL = "https://yeumoney.com/QL_api.php"
 VUOTNHANH_API_KEY = os.environ.get("VUOTNHANH_API_KEY", "e7c716d2-996f-4bdd-bcbf-7653223a400b")
 VUOTNHANH_API_URL = "https://vuotnhanh.com/api"
 
-YOUR_DOMAIN = os.environ.get("YOUR_DOMAIN", "https://your-app.onrender.com")
+# ========== DOMAIN THẬT CỦA BẠN ==========
+YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"
 
-# ========== TELEGRAM BOT (ĐÃ CẬP NHẬT) ==========
+# ========== TELEGRAM BOT ==========
 TELEGRAM_BOT_TOKEN = "8448578289:AAH2Pp6s3V1Le-cV5I1Qc-gFKQzTDBMXnvA"
-TELEGRAM_CHAT_ID = "8588555065"  # Chat ID của bạn
+TELEGRAM_CHAT_ID = "8588555065"
 
 # ========== ADMIN PANEL ==========
 ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
@@ -57,16 +58,13 @@ RATE_LIMITS = {
 # ========== HÀM TELEGRAM ==========
 def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram chưa được cấu hình đầy đủ")
         return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'}
-        response = requests.post(url, json=payload, timeout=5)
-        print(f"Telegram sent: {response.status_code}")
-        return response.status_code == 200
-    except Exception as e:
-        print(f"Telegram error: {e}")
+        requests.post(url, json=payload, timeout=5)
+        return True
+    except:
         return False
 
 def notify_new_key(key, user_ip, user_fingerprint):
@@ -77,8 +75,6 @@ def notify_new_key(key, user_ip, user_fingerprint):
 🌐 <b>IP:</b> {user_ip}
 🆔 <b>Fingerprint:</b> {user_fingerprint[:16]}...
 ⏰ <b>Thời gian:</b> {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
-━━━━━━━━━━━━━━━━━
-✅ Key có hiệu lực 24 giờ
     """)
 
 def notify_key_used(key, user_ip, user_fingerprint):
@@ -89,8 +85,6 @@ def notify_key_used(key, user_ip, user_fingerprint):
 🌐 <b>IP:</b> {user_ip}
 🆔 <b>Fingerprint:</b> {user_fingerprint[:16]}...
 ⏰ <b>Thời gian:</b> {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
-━━━━━━━━━━━━━━━━━
-🎉 Chúc mừng người dùng mới!
     """)
 
 def notify_new_user(ip, fingerprint):
@@ -109,8 +103,6 @@ def notify_completed_all_tasks(fingerprint, key):
 🆔 <b>Fingerprint:</b> {fingerprint[:16]}...
 🔑 <b>Key nhận được:</b> <code>{key}</code>
 ⏰ <b>Thời gian:</b> {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
-━━━━━━━━━━━━━━━━━
-💰 Bạn đã kiếm được tiền từ link nhiệm vụ!
     """)
 
 # ========== HÀM KIẾM TIỀN ==========
@@ -253,15 +245,6 @@ def add_to_blacklist(ip, fingerprint, reason):
     if fingerprint and fingerprint not in blacklist['fingerprints']:
         blacklist['fingerprints'].append(fingerprint)
     save_blacklist(blacklist)
-    
-    send_telegram_message(f"""
-🚫 <b>ĐÃ THÊM VÀO BLACKLIST!</b>
-━━━━━━━━━━━━━━━━━
-🌐 <b>IP:</b> {ip}
-🆔 <b>Fingerprint:</b> {fingerprint[:16]}...
-📝 <b>Lý do:</b> {reason}
-⏰ <b>Thời gian:</b> {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
-    """)
 
 # ========== LƯU TRỮ ==========
 def load_keys():
