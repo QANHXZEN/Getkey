@@ -60,7 +60,6 @@ BLACKLIST_FILE = "blacklist.json"
 RATE_LIMIT_FILE = "rate_limit.json"
 STATS_FILE = "stats.json"
 EARNINGS_FILE = "earnings.json"
-SETTINGS_FILE = "settings.json"
 LOGS_FILE = "logs.json"
 
 # ========== HÀM ĐỌC/GHI FILE JSON ==========
@@ -735,6 +734,54 @@ ERROR_HTML = """
 <body><div class="card"><div class="error-icon">⚠️</div><h2>Đã xảy ra lỗi</h2><p>{{ msg }}</p><a href="/getkey" class="btn">Thử lại</a></div></body></html>
 """
 
+CALLBACK_SUCCESS_HTML = """
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thành công - DRAGON PINGX</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+        .card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4);animation:fadeIn 0.5s}
+        @keyframes fadeIn{from{opacity:0;transform:scale(0.9)}to{opacity:1;transform:scale(1)}}
+        .success-icon{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
+        h2{font-size:28px;color:#00ff88;margin-bottom:10px}
+        p{color:#aaa;margin-bottom:20px;line-height:1.6}
+        .next-step{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:12px 30px;border-radius:40px;color:#fff;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;margin-top:10px}
+        .next-step:hover{transform:translateY(-2px);filter:brightness(1.05)}
+        .key-display{background:rgba(0,0,0,0.4);border-radius:16px;padding:16px;margin:20px 0;word-break:break-all}
+        .key-display code{font-size:18px;color:#b000ff}
+        .warning{font-size:12px;color:#64748b;margin-top:20px}
+        .confetti{position:fixed;width:8px;height:8px;background:linear-gradient(135deg,#b000ff,#ff44ff);position:absolute;animation:fall 2.5s linear forwards;z-index:9999}
+        @keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon"><svg width="35" height="35" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div>
+        <h2>{% if key %}🎉 CHÚC MỪNG! 🎉{% else %}✅ THÀNH CÔNG!{% endif %}</h2>
+        <p>{{ message }}</p>
+        {% if key %}
+        <div class="key-display">
+            <code>{{ key }}</code>
+        </div>
+        <a href="/" class="next-step">🏠 Về trang chủ</a>
+        {% elif next_step %}
+        <a href="/step/{{ sid }}/{{ next_step }}" class="next-step">🚀 Tiếp tục bước {{ next_step }}</a>
+        {% endif %}
+        <div class="warning">🔒 Hệ thống bảo mật tuyệt đối - DRAGON PINGX PREMIUM</div>
+    </div>
+    <script>
+        for(let i=0;i<80;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';document.body.appendChild(c);setTimeout(()=>c.remove(),2500)}
+        setTimeout(()=>{window.close()},3000);
+    </script>
+</body>
+</html>
+"""
+
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -752,7 +799,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:12px;text-align:left;col
 </style></head>
 <body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><div class="header"><h1>🔐 DRAGON PINGX ADMIN</h1><p style="color:#64748b">Quản lý hệ thống key</p></div>
 <div class="stats-grid"><div class="stat-card"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys_generated }}</div></div><div class="stat-card"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_keys_used }}</div></div><div class="stat-card"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat-card"><h3>💰 Thu nhập (USD)</h3><div class="value">${{ "%.4f"|format(earnings.total) }}</div></div></div>
-<div class="section"><h2>💰 Thu nhập chi tiết</h2><tr><th>Dịch vụ</th><th>USD</th></tr>
+<div class="section"><h2>💰 Thu nhập chi tiết</h2><table><th>Dịch vụ</th><th>USD</th></tr>
 <tr><td>Vuotnhanh</td><td>${{ "%.4f"|format(earnings_by_service.vuotnhanh) }}</td></tr>
 <tr><td>Yeumoney</td><td>${{ "%.4f"|format(earnings_by_service.yeumoney) }}</td></tr>
 <tr><td>Link4M</td><td>${{ "%.4f"|format(earnings_by_service.link4m) }}</td></tr>
@@ -815,29 +862,58 @@ def callback(sid, step):
     tasks = load_user_tasks()
     
     if sid not in tasks:
-        return "Session not found", 404
+        return render_template_string(ERROR_HTML, msg="Session không hợp lệ!"), 404
     
     task = tasks[sid]
+    fp = get_client_fingerprint()
     
+    # Kiểm tra fingerprint (bảo mật)
+    if task.get('fingerprint') != fp:
+        return render_template_string(ERROR_HTML, msg="Truy cập trái phép!"), 403
+    
+    # Kiểm tra đã hoàn thành chưa
+    field = f'step{step}_completed'
+    if task.get(field, False):
+        return render_template_string(CALLBACK_SUCCESS_HTML, 
+            message=f"✅ Bước {step} đã được hoàn thành trước đó!",
+            key=None, next_step=None, sid=None)
+    
+    # Xử lý theo từng bước
     if step == 1:
         task['step1_completed'] = True
         task['step'] = 2
         update_earnings('vuotnhanh', 0.0005)
+        save_user_tasks(tasks)
+        return render_template_string(CALLBACK_SUCCESS_HTML, 
+            message="🎉 Chúc mừng! Bạn đã hoàn thành bước 1 thành công! Hãy tiếp tục bước 2.",
+            key=None, next_step=2, sid=sid)
+    
     elif step == 2:
         task['step2_completed'] = True
         task['step'] = 3
         update_earnings('yeumoney', 0.001)
+        save_user_tasks(tasks)
+        return render_template_string(CALLBACK_SUCCESS_HTML, 
+            message="🎉 Chúc mừng! Bạn đã hoàn thành bước 2 thành công! Hãy tiếp tục bước cuối cùng.",
+            key=None, next_step=3, sid=sid)
+    
     elif step == 3:
         task['step3_completed'] = True
         new_key = create_new_key(24, f"Session {sid}")
         task['key'] = new_key
+        save_user_tasks(tasks)
+        
         update_stats('key_generated')
         notify_new_key(new_key, task.get('ip', 'unknown'), task.get('fingerprint', 'unknown'), sid)
         notify_completed_all_tasks(sid, task.get('fingerprint', 'unknown'), new_key)
         update_earnings('link4m', 0.002)
+        
+        return render_template_string(CALLBACK_SUCCESS_HTML, 
+            message=f"🎉 CHÚC MỪNG! Bạn đã hoàn thành toàn bộ nhiệm vụ! Đây là key của bạn:",
+            key=new_key, next_step=None, sid=None)
     
-    save_user_tasks(tasks)
-    return "OK"
+    else:
+        return render_template_string(ERROR_HTML, msg="Bước không hợp lệ!")
 
 @app.route('/api/check/<sid>/<int:step>')
 def check_step(sid, step):
