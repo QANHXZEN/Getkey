@@ -32,28 +32,13 @@ BLACKLIST_FILE = "blacklist.json"
 EARNINGS_FILE = "earnings.json"
 
 def get_real_ip():
-    """Lấy IP thật của người dùng (xử lý proxy, Cloudflare, VPN)"""
-    # Cloudflare
-    cf_connecting_ip = request.headers.get('Cf-Connecting-Ip')
-    if cf_connecting_ip:
-        return cf_connecting_ip
-    
-    # X-Forwarded-For (qua proxy)
+    """Lấy IP thật của người dùng"""
+    cf = request.headers.get('Cf-Connecting-Ip')
+    if cf: return cf
     xff = request.headers.get('X-Forwarded-For')
-    if xff:
-        return xff.split(',')[0].strip()
-    
-    # X-Real-IP
+    if xff: return xff.split(',')[0].strip()
     xri = request.headers.get('X-Real-Ip')
-    if xri:
-        return xri
-    
-    # True-Client-IP
-    tcip = request.headers.get('True-Client-Ip')
-    if tcip:
-        return tcip
-    
-    # Fallback
+    if xri: return xri
     return request.remote_addr
 
 def load_json(f, d=None):
@@ -161,8 +146,7 @@ def create_task(sid, fp, ip):
         'url1': short_link('vuotnhanh', cb1),
         'url2': short_link('yeumoney', cb2),
         'url3': short_link('link4m', cb3),
-        'fp': fp, 'ip': ip, 'created': datetime.now().isoformat(),
-        'user_agent': request.headers.get('User-Agent', 'unknown')[:200]
+        'fp': fp, 'ip': ip, 'created': datetime.now().isoformat()
     }
     save_json(TASKS_FILE, tasks)
     return tasks[sid]
@@ -293,7 +277,7 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th><tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %} </table</div><div class="card"><h2>📋 Key gần đây</h2><table><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table></div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"></table><th>IP</th><th>Hành động</th></tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %} </table</div><div class="card"><h2>📋 Key gần đây</h2><table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table></div></div></body></html>
 """
 
 # ========== ROUTES ==========
@@ -312,17 +296,7 @@ def getkey():
     sid = gen_sid()
     create_task(sid, fp, ip)
     
-    # Gửi Telegram với IP THẬT
-    send_tg(f"""
-👤 <b>TRUY CẬP MỚI</b>
-━━━━━━━━━━━━━━━
-🌐 <b>IP THẬT:</b> {ip}
-🆔 <b>Fingerprint:</b> {fp[:16]}...
-🆔 <b>Session:</b> {sid[:8]}...
-📱 <b>UA:</b> {request.headers.get('User-Agent', 'unknown')[:50]}...
-🌍 <b>X-Forwarded-For:</b> {request.headers.get('X-Forwarded-For', 'none')}
-⏰ {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
-    """)
+    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}...")
     
     return redirect(f'/step/{sid}/1')
 
@@ -331,8 +305,10 @@ def step_page(sid, s):
     task = get_task(sid)
     if not task:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
-    if task.get('fp') != get_fp():
-        return render_template_string(ERROR_HTML, msg="Truy cập trái phép!")
+    
+    # BỎ QUA KIỂM TRA FINGERPRINT - CHỈ CẦN SESSION TỒN TẠI
+    # Không chặn truy cập dù fingerprint có thay đổi
+    
     cfg = {
         1: {'title': '🚀 BƯỚC 1: VƯỢT NHANH', 'desc': 'Hoàn thành nhiệm vụ trên Vuotnhanh.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
         2: {'title': '💰 BƯỚC 2: YEUMONEY', 'desc': 'Hoàn thành nhiệm vụ trên Yeumoney.com', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'},
@@ -355,9 +331,7 @@ def callback(sid, s):
         task['step'] = 2
         save_json(TASKS_FILE, tasks)
         update_earnings('vuotnhanh', 0.0005, task.get('url1', ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        
-        send_tg(f"✅ <b>HOÀN THÀNH BƯỚC 1</b>\n🌐 IP: {task.get('ip', 'unknown')}\n🆔 SID: {sid[:8]}...")
-        
+        send_tg(f"✅ HOÀN THÀNH BƯỚC 1 | IP: {task.get('ip', 'unknown')}")
         return render_template_string(DONE_STEP_HTML, 
             message="✅ Bạn đã hoàn thành nhiệm vụ tại Vuotnhanh.com!",
             next_step=2, next_url=f'/step/{sid}/2', key=None, step=1)
@@ -367,9 +341,7 @@ def callback(sid, s):
         task['step'] = 3
         save_json(TASKS_FILE, tasks)
         update_earnings('yeumoney', 0.001, task.get('url2', ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        
-        send_tg(f"✅ <b>HOÀN THÀNH BƯỚC 2</b>\n🌐 IP: {task.get('ip', 'unknown')}\n🆔 SID: {sid[:8]}...")
-        
+        send_tg(f"✅ HOÀN THÀNH BƯỚC 2 | IP: {task.get('ip', 'unknown')}")
         return render_template_string(DONE_STEP_HTML, 
             message="✅ Bạn đã hoàn thành nhiệm vụ tại Yeumoney.com!",
             next_step=3, next_url=f'/step/{sid}/3', key=None, step=2)
@@ -380,9 +352,7 @@ def callback(sid, s):
         task['key'] = key
         save_json(TASKS_FILE, tasks)
         update_earnings('link4m', 0.002, task.get('url3', ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        
-        send_tg(f"🔑 <b>KEY MỚI</b>\n📌 <code>{key}</code>\n🌐 IP: {task.get('ip', 'unknown')}\n🆔 SID: {sid[:8]}...")
-        
+        send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}")
         return render_template_string(DONE_STEP_HTML, 
             message="🎉 CHÚC MỪNG! Bạn đã hoàn thành toàn bộ nhiệm vụ!",
             next_step=None, next_url=None, key=key, step=3)
@@ -408,8 +378,6 @@ def final(sid):
     task = get_task(sid)
     if not task:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
-    if task.get('fp') != get_fp():
-        return render_template_string(ERROR_HTML, msg="Truy cập trái phép!")
     key = task.get('key')
     if not key:
         return render_template_string(ERROR_HTML, msg="Chưa có key!")
