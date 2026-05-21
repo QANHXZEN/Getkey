@@ -32,13 +32,10 @@ BLACKLIST_FILE = "blacklist.json"
 EARNINGS_FILE = "earnings.json"
 
 def get_real_ip():
-    """Lấy IP thật của người dùng"""
     cf = request.headers.get('Cf-Connecting-Ip')
     if cf: return cf
     xff = request.headers.get('X-Forwarded-For')
     if xff: return xff.split(',')[0].strip()
-    xri = request.headers.get('X-Real-Ip')
-    if xri: return xri
     return request.remote_addr
 
 def load_json(f, d=None):
@@ -74,10 +71,7 @@ def verify_key(key):
     return m.group(1) == hashlib.md5(key[:-3].encode()).hexdigest()[:2].upper()
 
 def get_fp():
-    ua = request.headers.get('User-Agent', 'unknown')
-    al = request.headers.get('Accept-Language', 'unknown')
-    ip = get_real_ip()
-    return hashlib.sha256(f"{ip}|{ua}|{al}".encode()).hexdigest()[:32]
+    return hashlib.sha256(f"{get_real_ip()}|{request.headers.get('User-Agent', 'unknown')}|{request.headers.get('Accept-Language', 'unknown')}".encode()).hexdigest()[:32]
 
 def gen_sid():
     return secrets.token_hex(16)
@@ -138,44 +132,27 @@ def use_key(key, fp, ip):
 
 def create_task(sid, fp, ip):
     tasks = load_json(TASKS_FILE, {})
-    cb1 = f"{YOUR_DOMAIN}/cb/{sid}/1"
-    cb2 = f"{YOUR_DOMAIN}/cb/{sid}/2"
-    cb3 = f"{YOUR_DOMAIN}/cb/{sid}/3"
+    # Tạo callback có xác thực
+    timestamp = int(time.time())
+    signature = hashlib.md5(f"{sid}{timestamp}{ENCRYPTION_KEY}".encode()).hexdigest()[:16]
+    
+    cb1 = f"{YOUR_DOMAIN}/cb/{sid}/1?t={timestamp}&sig={signature}"
+    cb2 = f"{YOUR_DOMAIN}/cb/{sid}/2?t={timestamp}&sig={signature}"
+    cb3 = f"{YOUR_DOMAIN}/cb/{sid}/3?t={timestamp}&sig={signature}"
+    
     tasks[sid] = {
         'step': 1, 's1': False, 's2': False, 's3': False,
         'url1': short_link('vuotnhanh', cb1),
         'url2': short_link('yeumoney', cb2),
         'url3': short_link('link4m', cb3),
-        'fp': fp, 'ip': ip, 'created': datetime.now().isoformat()
+        'fp': fp, 'ip': ip, 'created': datetime.now().isoformat(),
+        'user_agent': request.headers.get('User-Agent', 'unknown')[:200]
     }
     save_json(TASKS_FILE, tasks)
     return tasks[sid]
 
 def get_task(sid):
     return load_json(TASKS_FILE, {}).get(sid)
-
-def complete_step(sid, step):
-    tasks = load_json(TASKS_FILE, {})
-    if sid not in tasks: return False
-    t = tasks[sid]
-    f = f's{step}'
-    if t.get(f): return False
-    t[f] = True
-    t['step'] = step + 1
-    save_json(TASKS_FILE, tasks)
-    return True
-
-def finish_task(sid):
-    tasks = load_json(TASKS_FILE, {})
-    if sid not in tasks: return None
-    t = tasks[sid]
-    if not t.get('s3'): return None
-    if t.get('key'): return t['key']
-    key = create_key(24, f"Session {sid}")
-    t['key'] = key
-    save_json(TASKS_FILE, tasks)
-    send_tg(f"🔑 KEY MỚI: {key} | IP: {t.get('ip', 'unknown')}")
-    return key
 
 def update_earnings(service, amount, link, sid, ip, fp):
     earn = load_json(EARNINGS_FILE, {})
@@ -190,6 +167,9 @@ def update_earnings(service, amount, link, sid, ip, fp):
     save_json(EARNINGS_FILE, earn)
     send_tg(f"💰 +${amount} từ {service}\n🔗 {link[:60]}...\n📊 {YOUR_DOMAIN}/earning/{sid}")
 
+# Khóa bí mật cho signature
+ENCRYPTION_KEY = secrets.token_hex(32)
+
 # ========== HTML TEMPLATES ==========
 INDEX_HTML = """
 <!DOCTYPE html>
@@ -202,74 +182,21 @@ STEP_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Bước {{ step }} - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{max-width:550px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:32px;border:1px solid rgba(176,0,255,0.3);text-align:center}.step-badge{background:linear-gradient(135deg,#b000ff,#ff44ff);padding:6px 20px;border-radius:100px;font-size:12px;font-weight:600;color:#fff;display:inline-block;margin-bottom:20px}h2{font-size:28px;background:linear-gradient(135deg,#fff,#b000ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.desc{color:#aaa;margin-bottom:20px}.info{background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:12px;padding:12px;margin:15px 0;font-size:13px;color:#ffc107}.task-link{background:rgba(0,0,0,0.4);border-radius:16px;padding:16px;margin:20px 0;word-break:break-all;border:1px dashed rgba(176,0,255,0.3)}.task-link a{color:#b000ff;text-decoration:none;font-size:14px}.btn-group{display:flex;gap:16px;margin-top:24px}.btn-continue{flex:1;background:linear-gradient(135deg,#00cc66,#00ff88);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer}.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center}.warning{font-size:13px;color:#f87171;margin-top:16px;display:none}.warning.show{display:block}</style></head>
-<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/3</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a><button class="btn-continue" onclick="checkComplete()" id="continueBtn">✅ TIẾP TỤC</button></div><div class="warning" id="warningMsg">⚠️ Bạn chưa hoàn thành nhiệm vụ!</div></div><script>let sid="{{ sid }}",step={{ step }},checking=false;async function checkComplete(){if(checking)return;checking=true;const btn=document.getElementById('continueBtn'),original=btn.innerHTML;btn.innerHTML='⏳ Đang kiểm tra...';btn.disabled=true;document.getElementById('warningMsg').classList.remove('show');try{const res=await fetch(`/api/check/${sid}/${step}`),data=await res.json();if(data.completed){window.location.href=data.next}else{document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false;window.open(document.getElementById('taskLink').href,'_blank')}}catch(e){document.getElementById('warningMsg').innerHTML='⚠️ Lỗi, thử lại!';document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}window.open(document.getElementById('taskLink').href,'_blank');</script></body></html>
+<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/3</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a><button class="btn-continue" onclick="checkComplete()" id="continueBtn">✅ KIỂM TRA</button></div><div class="warning" id="warningMsg">⚠️ Bạn chưa hoàn thành nhiệm vụ!</div></div><script>let sid="{{ sid }}",step={{ step }},checking=false;async function checkComplete(){if(checking)return;checking=true;const btn=document.getElementById('continueBtn'),original=btn.innerHTML;btn.innerHTML='⏳ Đang kiểm tra...';btn.disabled=true;document.getElementById('warningMsg').classList.remove('show');try{const res=await fetch(`/api/check/${sid}/${step}`),data=await res.json();if(data.completed){window.location.href=data.next}else{document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}catch(e){document.getElementById('warningMsg').innerHTML='⚠️ Lỗi, thử lại!';document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}</script></body></html>
 """
 
 DONE_STEP_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hoàn thành bước {{ step }} - DRAGON PINGX</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <style>
-        *{margin:0;padding:0;box-sizing:border-box}
-        body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
-        .confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}
-        @keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}
-        .card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4);animation:bounce 0.8s;z-index:2}
-        @keyframes bounce{0%{opacity:0;transform:scale(0.7)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
-        .success-icon{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
-        h2{font-size:28px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}
-        .desc{color:#aaa;margin-bottom:30px}
-        .btn-group{display:flex;gap:16px;margin-top:30px}
-        .btn-next{flex:1;background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}
-        .btn-next:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(176,0,255,0.4)}
-        .btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}
-        .btn-back:hover{background:rgba(176,0,255,0.4)}
-        .warning{font-size:12px;color:#666;margin-top:20px}
-        .key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:20px;margin:20px 0;border:1px dashed #b000ff}
-        .key-value{font-family:monospace;font-size:18px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="success-icon"><svg width="35" height="35" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div>
-        <h2>🎉 HOÀN THÀNH!</h2>
-        <div class="desc">{{ message }}</div>
-        {% if key %}
-        <div class="key-box">
-            <div style="font-size:11px;color:#b000ff;margin-bottom:10px">🔑 KEY CỦA BẠN</div>
-            <div class="key-value" id="licenseKey">{{ key }}</div>
-        </div>
-        <button class="btn-next" onclick="copyKey()">📋 Sao chép key</button>
-        {% endif %}
-        <div class="btn-group">
-            <a href="/" class="btn-back">🔙 QUAY LẠI</a>
-            {% if next_step %}
-            <a href="{{ next_url }}" class="btn-next">➡️ TIẾP THEO BƯỚC {{ next_step }}</a>
-            {% else %}
-            <a href="/" class="btn-next">🏠 VỀ TRANG CHỦ</a>
-            {% endif %}
-        </div>
-        <div class="warning">💜 Cảm ơn bạn đã hoàn thành nhiệm vụ!</div>
-    </div>
-    <script>
-        const colors=['#b000ff','#ff44ff','#00ff88','#ffaa00'];
-        for(let i=0;i<100;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=colors[Math.floor(Math.random()*colors.length)];c.style.width=(5+Math.random()*8)+'px';c.style.height=(5+Math.random()*8)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),3000)}
-        {% if key %}
-        function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}
-        {% endif %}
-    </script>
-</body></html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hoàn thành bước {{ step }}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}.card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4);animation:bounce 0.8s;z-index:2}@keyframes bounce{0%{opacity:0;transform:scale(0.7)}50%{transform:scale(1.05)}100%{transform:scale(1)}}.success-icon{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}h2{font-size:28px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.desc{color:#aaa;margin-bottom:30px}.btn-group{display:flex;gap:16px;margin-top:30px}.btn-next{flex:1;background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}.btn-next:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(176,0,255,0.4)}.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}.btn-back:hover{background:rgba(176,0,255,0.4)}.warning{font-size:12px;color:#666;margin-top:20px}.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:20px;margin:20px 0;border:1px dashed #b000ff}.key-value{font-family:monospace;font-size:18px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all}</style></head>
+<body><div class="card"><div class="success-icon"><svg width="35" height="35" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 HOÀN THÀNH!</h2><div class="desc">{{ message }}</div>{% if key %}<div class="key-box"><div style="font-size:11px;color:#b000ff;margin-bottom:10px">🔑 KEY CỦA BẠN</div><div class="key-value" id="licenseKey">{{ key }}</div></div><button class="btn-next" onclick="copyKey()">📋 Sao chép key</button>{% endif %}<div class="btn-group"><a href="/" class="btn-back">🔙 QUAY LẠI</a>{% if next_step %}<a href="{{ next_url }}" class="btn-next">➡️ TIẾP THEO BƯỚC {{ next_step }}</a>{% else %}<a href="/" class="btn-next">🏠 VỀ TRANG CHỦ</a>{% endif %}</div><div class="warning">💜 Cảm ơn bạn đã hoàn thành nhiệm vụ!</div></div><script>for(let i=0;i<100;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*8)+'px';c.style.height=(5+Math.random()*8)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),3000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
 """
 
 FINAL_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Thành Công - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}.card{max-width:520px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4)}.success-icon{width:80px;height:80px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 24px}h2{font-size:32px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:24px;margin:24px 0;border:1px dashed #b000ff}.key-value{font-family:monospace;font-size:20px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all;margin:12px 0;cursor:pointer}.copy-btn{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:12px 32px;border-radius:40px;color:#fff;cursor:pointer;font-weight:600}.btn-back{display:inline-block;background:rgba(176,0,255,0.2);text-decoration:none;color:#b000ff;padding:10px 24px;border-radius:40px;margin-top:16px}.warning{font-size:12px;color:#666;margin:16px 0}</style></head>
-<body><div class="card"><div class="success-icon"><svg width="48" height="48" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 THÀNH CÔNG!</h2><div class="desc">Bạn đã hoàn thành tất cả nhiệm vụ</div><div class="key-box"><div style="font-size:11px;color:#b000ff;letter-spacing:2px;margin-bottom:10px">🔑 KEY KÍCH HOẠT</div><div class="key-value" id="licenseKey" onclick="copyKey()">{{ key }}</div><button class="copy-btn" onclick="copyKey()">📋 Sao chép key</button></div><div class="warning">⏰ Key có hiệu lực trong 24 giờ<br>📱 Nhập key vào ứng dụng DRAGON PINGX PREMIUM</div><a href="/" class="btn-back">🏠 Về trang chủ</a></div><script>const colors=['#b000ff','#ff44ff','#00ff88','#ffaa00'];for(let i=0;i<150;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=colors[Math.floor(Math.random()*colors.length)];c.style.width=(5+Math.random()*10)+'px';c.style.height=(5+Math.random()*10)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),5000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
+<body><div class="card"><div class="success-icon"><svg width="48" height="48" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 THÀNH CÔNG!</h2><div class="desc">Bạn đã hoàn thành tất cả nhiệm vụ</div><div class="key-box"><div style="font-size:11px;color:#b000ff;letter-spacing:2px;margin-bottom:10px">🔑 KEY KÍCH HOẠT</div><div class="key-value" id="licenseKey" onclick="copyKey()">{{ key }}</div><button class="copy-btn" onclick="copyKey()">📋 Sao chép key</button></div><div class="warning">⏰ Key có hiệu lực trong 24 giờ<br>📱 Nhập key vào ứng dụng DRAGON PINGX PREMIUM</div><a href="/" class="btn-back">🏠 Về trang chủ</a></div><script>for(let i=0;i<150;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*10)+'px';c.style.height=(5+Math.random()*10)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),5000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
 """
 
 ERROR_HTML = """
@@ -277,7 +204,7 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"></table><th>IP</th><th>Hành động</th></tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %} </table</div><div class="card"><h2>📋 Key gần đây</h2><table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table></div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></td>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th><tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
 """
 
 # ========== ROUTES ==========
@@ -289,15 +216,11 @@ def index():
 def getkey():
     ip = get_real_ip()
     fp = get_fp()
-    
     if is_blocked(ip, fp):
         return render_template_string(ERROR_HTML, msg="Truy cập bị chặn!")
-    
     sid = gen_sid()
     create_task(sid, fp, ip)
-    
-    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}...")
-    
+    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}")
     return redirect(f'/step/{sid}/1')
 
 @app.route('/step/<sid>/<int:s>')
@@ -305,10 +228,6 @@ def step_page(sid, s):
     task = get_task(sid)
     if not task:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
-    
-    # BỎ QUA KIỂM TRA FINGERPRINT - CHỈ CẦN SESSION TỒN TẠI
-    # Không chặn truy cập dù fingerprint có thay đổi
-    
     cfg = {
         1: {'title': '🚀 BƯỚC 1: VƯỢT NHANH', 'desc': 'Hoàn thành nhiệm vụ trên Vuotnhanh.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
         2: {'title': '💰 BƯỚC 2: YEUMONEY', 'desc': 'Hoàn thành nhiệm vụ trên Yeumoney.com', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'},
@@ -321,17 +240,39 @@ def step_page(sid, s):
 
 @app.route('/cb/<sid>/<int:s>')
 def callback(sid, s):
+    """Callback từ dịch vụ rút gọn link - CÓ XÁC THỰC"""
+    timestamp = request.args.get('t')
+    signature = request.args.get('sig')
+    
+    # Xác thực chữ ký
+    expected_sig = hashlib.md5(f"{sid}{timestamp}{ENCRYPTION_KEY}".encode()).hexdigest()[:16]
+    if not signature or signature != expected_sig:
+        return "Invalid signature", 403
+    
+    # Kiểm tra thời gian (chỉ chấp nhận trong 10 phút)
+    if abs(int(timestamp) - time.time()) > 600:
+        return "Expired", 400
+    
     tasks = load_json(TASKS_FILE, {})
     if sid not in tasks:
-        return render_template_string(ERROR_HTML, msg="Session không hợp lệ!"), 404
+        return "Session not found", 404
+    
     task = tasks[sid]
+    
+    # Kiểm tra IP và User-Agent khớp với session
+    current_ip = get_real_ip()
+    current_ua = request.headers.get('User-Agent', 'unknown')
+    
+    if task.get('ip') != current_ip:
+        # Ghi log nhưng vẫn cho qua (có thể do VPN)
+        send_tg(f"⚠️ IP mismatch: session={task.get('ip')}, callback={current_ip}")
     
     if s == 1 and not task.get('s1'):
         task['s1'] = True
         task['step'] = 2
         save_json(TASKS_FILE, tasks)
-        update_earnings('vuotnhanh', 0.0005, task.get('url1', ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        send_tg(f"✅ HOÀN THÀNH BƯỚC 1 | IP: {task.get('ip', 'unknown')}")
+        update_earnings('vuotnhanh', 0.0005, task.get('url1', ''), sid, current_ip, task.get('fp', 'unknown'))
+        send_tg(f"✅ HOÀN THÀNH BƯỚC 1 | IP: {current_ip}")
         return render_template_string(DONE_STEP_HTML, 
             message="✅ Bạn đã hoàn thành nhiệm vụ tại Vuotnhanh.com!",
             next_step=2, next_url=f'/step/{sid}/2', key=None, step=1)
@@ -340,8 +281,8 @@ def callback(sid, s):
         task['s2'] = True
         task['step'] = 3
         save_json(TASKS_FILE, tasks)
-        update_earnings('yeumoney', 0.001, task.get('url2', ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        send_tg(f"✅ HOÀN THÀNH BƯỚC 2 | IP: {task.get('ip', 'unknown')}")
+        update_earnings('yeumoney', 0.001, task.get('url2', ''), sid, current_ip, task.get('fp', 'unknown'))
+        send_tg(f"✅ HOÀN THÀNH BƯỚC 2 | IP: {current_ip}")
         return render_template_string(DONE_STEP_HTML, 
             message="✅ Bạn đã hoàn thành nhiệm vụ tại Yeumoney.com!",
             next_step=3, next_url=f'/step/{sid}/3', key=None, step=2)
@@ -351,8 +292,8 @@ def callback(sid, s):
         key = create_key(24, f"Session {sid}")
         task['key'] = key
         save_json(TASKS_FILE, tasks)
-        update_earnings('link4m', 0.002, task.get('url3', ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}")
+        update_earnings('link4m', 0.002, task.get('url3', ''), sid, current_ip, task.get('fp', 'unknown'))
+        send_tg(f"🔑 KEY MỚI: {key} | IP: {current_ip}")
         return render_template_string(DONE_STEP_HTML, 
             message="🎉 CHÚC MỪNG! Bạn đã hoàn thành toàn bộ nhiệm vụ!",
             next_step=None, next_url=None, key=key, step=3)
