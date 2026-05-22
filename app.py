@@ -19,7 +19,6 @@ app.secret_key = secrets.token_hex(32)
 # ========== CẤU HÌNH ==========
 LINK4M_API_KEY = "65c47d157fbdff4d79625e57"
 YEUMONEY_API_KEY = "4e3bbf63ff3ac2f780f246675412f35c3f31946a74f195992dbaf2a6d6c26eee"
-VUOTNHANH_API_KEY = "e7c716d2-996f-4bdd-bcbf-7653223a400b"
 YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"
 TELEGRAM_BOT_TOKEN = "8448578289:AAH2Pp6s3V1Le-cV5I1Qc-gFKQzTDBMXnvA"
 TELEGRAM_CHAT_ID = "8588555065"
@@ -101,11 +100,6 @@ def short_link(service, url):
                 d = r.json()
                 if d.get('status') == 'success' and d.get('shortenedUrl'):
                     return d.get('shortenedUrl')
-        else:
-            r = requests.get(f"https://vuotnhanh.com/api?token={VUOTNHANH_API_KEY}&url={enc}&format=json", timeout=5)
-            if r.status_code == 200:
-                d = r.json()
-                return d.get('shortenedUrl') or d.get('short_url') or d.get('url') or url
     except: pass
     return url
 
@@ -132,12 +126,10 @@ def use_key(key, fp, ip):
 
 def create_task(sid, fp, ip):
     tasks = load_json(TASKS_FILE, {})
-    # Tạo link đơn giản, không có callback tự động
     tasks[sid] = {
-        'step': 1, 's1': False, 's2': False, 's3': False,
-        'url1': short_link('vuotnhanh', f"{YOUR_DOMAIN}/task/{sid}/1"),
-        'url2': short_link('yeumoney', f"{YOUR_DOMAIN}/task/{sid}/2"),
-        'url3': short_link('link4m', f"{YOUR_DOMAIN}/task/{sid}/3"),
+        'step': 1, 's1': False, 's2': False,
+        'url1': short_link('yeumoney', f"{YOUR_DOMAIN}/task/{sid}/1"),
+        'url2': short_link('link4m', f"{YOUR_DOMAIN}/task/{sid}/2"),
         'fp': fp, 'ip': ip, 'created': datetime.now().isoformat()
     }
     save_json(TASKS_FILE, tasks)
@@ -171,7 +163,7 @@ STEP_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Bước {{ step }} - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{max-width:550px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:32px;border:1px solid rgba(176,0,255,0.3);text-align:center}.step-badge{background:linear-gradient(135deg,#b000ff,#ff44ff);padding:6px 20px;border-radius:100px;font-size:12px;font-weight:600;color:#fff;display:inline-block;margin-bottom:20px}h2{font-size:28px;background:linear-gradient(135deg,#fff,#b000ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.desc{color:#aaa;margin-bottom:20px}.info{background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:12px;padding:12px;margin:15px 0;font-size:13px;color:#ffc107}.task-link{background:rgba(0,0,0,0.4);border-radius:16px;padding:16px;margin:20px 0;word-break:break-all;border:1px dashed rgba(176,0,255,0.3)}.task-link a{color:#b000ff;text-decoration:none;font-size:14px}.btn-group{display:flex;gap:16px;margin-top:24px}.btn-continue{flex:1;background:linear-gradient(135deg,#00cc66,#00ff88);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer}.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center}.warning{font-size:13px;color:#f87171;margin-top:16px;display:none}.warning.show{display:block}</style></head>
-<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/3</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a><button class="btn-continue" onclick="checkComplete()" id="continueBtn">✅ TIẾP TỤC</button></div><div class="warning" id="warningMsg">⚠️ Bạn chưa hoàn thành nhiệm vụ!</div></div><script>let sid="{{ sid }}",step={{ step }},checking=false;async function checkComplete(){if(checking)return;checking=true;const btn=document.getElementById('continueBtn'),original=btn.innerHTML;btn.innerHTML='⏳ Đang kiểm tra...';btn.disabled=true;document.getElementById('warningMsg').classList.remove('show');try{const res=await fetch(`/api/check/${sid}/${step}`),data=await res.json();if(data.completed){window.location.href=data.next}else{document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}catch(e){document.getElementById('warningMsg').innerHTML='⚠️ Lỗi, thử lại!';document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}</script></body></html>
+<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/2</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a><button class="btn-continue" onclick="checkComplete()" id="continueBtn">✅ TIẾP TỤC</button></div><div class="warning" id="warningMsg">⚠️ Bạn chưa hoàn thành nhiệm vụ!</div></div><script>let sid="{{ sid }}",step={{ step }},checking=false;async function checkComplete(){if(checking)return;checking=true;const btn=document.getElementById('continueBtn'),original=btn.innerHTML;btn.innerHTML='<span class="loading"></span> Đang kiểm tra...';btn.disabled=true;document.getElementById('warningMsg').classList.remove('show');try{const res=await fetch(`/api/check/${sid}/${step}`),data=await res.json();if(data.completed){window.location.href=data.next}else{document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}catch(e){document.getElementById('warningMsg').innerHTML='⚠️ Lỗi, thử lại!';document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}</script></body></html>
 """
 
 DONE_STEP_HTML = """
@@ -193,7 +185,7 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2></table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></td>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
 """
 
 # ========== ROUTES ==========
@@ -203,7 +195,6 @@ def index():
 
 @app.route('/getkey')
 def getkey():
-    """Bấm nút này - TẠO SESSION VÀ HIỂN THỊ BƯỚC 1 (LINK VUOTNHANH)"""
     ip = get_real_ip()
     fp = get_fp()
     if is_blocked(ip, fp):
@@ -211,7 +202,6 @@ def getkey():
     sid = gen_sid()
     create_task(sid, fp, ip)
     send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}")
-    # QUAN TRỌNG: Chuyển thẳng sang step 1 để hiển thị link Vuotnhanh
     return redirect(f'/step/{sid}/1')
 
 @app.route('/step/<sid>/<int:s>')
@@ -220,50 +210,42 @@ def step_page(sid, s):
     if not task:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
     cfg = {
-        1: {'title': '🚀 BƯỚC 1: VƯỢT NHANH', 'desc': 'Hoàn thành nhiệm vụ trên Vuotnhanh.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
-        2: {'title': '💰 BƯỚC 2: YEUMONEY', 'desc': 'Hoàn thành nhiệm vụ trên Yeumoney.com', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'},
-        3: {'title': '🔗 BƯỚC 3: LINK4M', 'desc': 'Hoàn thành nhiệm vụ cuối cùng', 'url': task.get('url3', '#'), 'back': f'/step/{sid}/2'}
+        1: {'title': '💰 BƯỚC 1: YEUMONEY', 'desc': 'Hoàn thành nhiệm vụ trên Yeumoney.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
+        2: {'title': '🔗 BƯỚC 2: LINK4M', 'desc': 'Hoàn thành nhiệm vụ cuối cùng', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'}
     }
     c = cfg.get(s)
     if not c:
         return render_template_string(ERROR_HTML, msg="Bước không hợp lệ!")
-    return render_template_string(STEP_HTML, step=s, title=c['title'], desc=c['desc'], url=c['url'], sid=sid, back_url=c['back'])
+    return render_template_string(STEP_HTML, step=s, title=c['title'], desc=c['desc'], url=c['url'], sid=sid, total_steps=2, back_url=c['back'])
 
 @app.route('/task/<sid>/<int:s>')
 def task_complete(sid, s):
-    """Khi người dùng bấm vào link nhiệm vụ, tự động đánh dấu hoàn thành"""
     tasks = load_json(TASKS_FILE, {})
     if sid not in tasks:
         return render_template_string(ERROR_HTML, msg="Session không hợp lệ!")
-    
     task = tasks[sid]
     field = f's{s}'
-    
     if not task.get(field):
         task[field] = True
         task['step'] = s + 1
         save_json(TASKS_FILE, tasks)
-        
-        # Cập nhật thu nhập
-        service = {1: 'vuotnhanh', 2: 'yeumoney', 3: 'link4m'}[s]
-        amount = {1: 0.0005, 2: 0.001, 3: 0.002}[s]
+        service = {1: 'yeumoney', 2: 'link4m'}[s]
+        amount = {1: 0.001, 2: 0.002}[s]
         url_field = f'url{s}'
         update_earnings(service, amount, task.get(url_field, ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        
-        if s == 3:
+        if s == 2:
             key = create_key(24, f"Session {sid}")
             task['key'] = key
             save_json(TASKS_FILE, tasks)
             send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}")
             return render_template_string(DONE_STEP_HTML, 
                 message="🎉 CHÚC MỪNG! Bạn đã hoàn thành toàn bộ nhiệm vụ!",
-                next_step=None, next_url=None, key=key, step=3)
+                next_step=None, next_url=None, key=key, step=s)
         else:
             send_tg(f"✅ HOÀN THÀNH BƯỚC {s} | IP: {task.get('ip', 'unknown')}")
             return render_template_string(DONE_STEP_HTML, 
                 message=f"✅ Bạn đã hoàn thành nhiệm vụ tại {service}!",
                 next_step=s+1, next_url=f'/step/{sid}/{s+1}', key=None, step=s)
-    
     return render_template_string(ERROR_HTML, msg="Bước đã hoàn thành trước đó!")
 
 @app.route('/api/check/<sid>/<int:s>')
@@ -274,8 +256,6 @@ def check(sid, s):
     if s == 1 and task.get('s1'):
         return jsonify({'completed': True, 'next': f'/step/{sid}/2'})
     elif s == 2 and task.get('s2'):
-        return jsonify({'completed': True, 'next': f'/step/{sid}/3'})
-    elif s == 3 and task.get('s3'):
         if task.get('key'):
             return jsonify({'completed': True, 'next': f'/final/{sid}'})
     return jsonify({'completed': False})
