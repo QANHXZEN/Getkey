@@ -29,6 +29,7 @@ KEYS_FILE = "keys.json"
 TASKS_FILE = "tasks.json"
 BLACKLIST_FILE = "blacklist.json"
 EARNINGS_FILE = "earnings.json"
+IP_LIMIT_FILE = "ip_limit.json"  # Thêm file giới hạn IP
 
 def get_real_ip():
     cf = request.headers.get('Cf-Connecting-Ip')
@@ -85,6 +86,36 @@ def block(ip, fp, reason):
     if fp and fp not in b['fps']: b['fps'].append(fp)
     save_json(BLACKLIST_FILE, b)
     send_tg(f"🚫 BLACKLIST: {ip} | {reason}")
+
+# ========== GIỚI HẠN IP ==========
+def check_ip_limit(ip):
+    """Kiểm tra IP có đang spam không (tối đa 3 key/giờ)"""
+    limits = load_json(IP_LIMIT_FILE, {})
+    now = time.time()
+    hour_ago = now - 3600
+    
+    if ip not in limits:
+        limits[ip] = {'count': 1, 'first_request': now, 'last_request': now}
+        save_json(IP_LIMIT_FILE, limits)
+        return True
+    
+    record = limits[ip]
+    # Reset sau 1 giờ
+    if record['first_request'] < hour_ago:
+        record['count'] = 1
+        record['first_request'] = now
+        record['last_request'] = now
+        save_json(IP_LIMIT_FILE, limits)
+        return True
+    
+    # Giới hạn 3 key/giờ
+    if record['count'] >= 3:
+        return False
+    
+    record['count'] += 1
+    record['last_request'] = now
+    save_json(IP_LIMIT_FILE, limits)
+    return True
 
 def short_link(service, url):
     try:
@@ -185,7 +216,7 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></td>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></td>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></td>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
 """
 
 # ========== ROUTES ==========
@@ -197,8 +228,16 @@ def index():
 def getkey():
     ip = get_real_ip()
     fp = get_fp()
+    
+    # Kiểm tra blacklist
     if is_blocked(ip, fp):
         return render_template_string(ERROR_HTML, msg="Truy cập bị chặn!")
+    
+    # CHỐNG SPAM: Kiểm tra giới hạn IP
+    if not check_ip_limit(ip):
+        block(ip, fp, "Spam key - vượt quá giới hạn 3 key/giờ")
+        return render_template_string(ERROR_HTML, msg="Bạn đang thực hiện quá nhiều yêu cầu! Vui lòng thử lại sau 1 giờ.")
+    
     sid = gen_sid()
     create_task(sid, fp, ip)
     send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}")
