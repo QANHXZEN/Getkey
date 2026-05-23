@@ -12,6 +12,8 @@ from functools import wraps
 import re
 import urllib.parse
 import threading
+import sqlite3
+from contextlib import closing
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -25,39 +27,28 @@ TELEGRAM_CHAT_ID = "8588555065"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "Dragon@2024"
 
+# ========== FILE LƯU TRỮ ==========
 KEYS_FILE = "keys.json"
 TASKS_FILE = "tasks.json"
 BLACKLIST_FILE = "blacklist.json"
 EARNINGS_FILE = "earnings.json"
 IP_LIMIT_FILE = "ip_limit.json"
+HWID_WHITELIST_FILE = "hwid_whitelist.json"
+LICENSE_DB = "licenses.db"
 
+# ========== HÀM LẤY IP THẬT ==========
 def get_real_ip_with_port():
-    """Lấy IP và Port thật của người dùng (xử lý proxy, Cloudflare)"""
-    # Cloudflare
     cf_ip = request.headers.get('Cf-Connecting-Ip')
-    cf_port = request.headers.get('Cf-Ray', '').split('-')[0] if request.headers.get('Cf-Ray') else None
-    
-    # X-Forwarded-For (qua proxy)
     xff = request.headers.get('X-Forwarded-For', '')
     xff_ip = xff.split(',')[0].strip() if xff else None
-    
-    # X-Real-IP
-    xri = request.headers.get('X-Real-Ip')
-    
-    # Port từ nhiều nguồn
     port = request.environ.get('REMOTE_PORT', 'unknown')
-    xff_port = request.headers.get('X-Forwarded-Port', 'unknown')
     
-    # IP cuối cùng
     if cf_ip:
         final_ip = cf_ip
         source = 'cloudflare'
     elif xff_ip:
         final_ip = xff_ip
         source = 'x-forwarded-for'
-    elif xri:
-        final_ip = xri
-        source = 'x-real-ip'
     else:
         final_ip = request.remote_addr
         source = 'remote_addr'
@@ -65,17 +56,14 @@ def get_real_ip_with_port():
     return {
         'ip': final_ip,
         'port': port,
-        'xff_port': xff_port,
-        'xff': xff,
-        'cf_ip': cf_ip,
         'source': source,
-        'full': f"{final_ip}:{port}",
         'user_agent': request.headers.get('User-Agent', 'unknown')[:100]
     }
 
 def get_real_ip():
     return get_real_ip_with_port()['ip']
 
+# ========== ĐỌC/GHI FILE JSON ==========
 def load_json(f, d=None):
     if d is None: d = {}
     if not os.path.exists(f): return d
@@ -89,12 +77,14 @@ def save_json(f, d):
         return True
     except: return False
 
+# ========== TELEGRAM ==========
 def send_tg(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                       json={'chat_id': TELEGRAM_CHAT_ID, 'text': msg[:4000], 'parse_mode': 'HTML'}, timeout=5)
     except: pass
 
+# ========== SINH KEY ==========
 def gen_key():
     p1 = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     p2 = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
@@ -108,14 +98,16 @@ def verify_key(key):
     if not m: return False
     return m.group(1) == hashlib.md5(key[:-3].encode()).hexdigest()[:2].upper()
 
+# ========== FINGERPRINT ==========
 def get_fp():
     info = get_real_ip_with_port()
-    fp_str = f"{info['ip']}:{info['port']}|{info['user_agent']}"
+    fp_str = f"{info['ip']}:{info['port']}|{info['user_agent']}|{request.headers.get('Accept-Language', '')}"
     return hashlib.sha256(fp_str.encode()).hexdigest()[:32]
 
 def gen_sid():
     return secrets.token_hex(16)
 
+# ========== BLACKLIST ==========
 def is_blocked(ip, fp):
     b = load_json(BLACKLIST_FILE, {'ips': [], 'fps': []})
     return ip in b.get('ips', []) or fp in b.get('fps', [])
@@ -127,13 +119,14 @@ def block(ip, fp, reason):
     save_json(BLACKLIST_FILE, b)
     send_tg(f"🚫 BLACKLIST: {ip} | {reason}")
 
+# ========== GIỚI HẠN IP ==========
 def check_ip_limit(ip):
     limits = load_json(IP_LIMIT_FILE, {})
     now = time.time()
     hour_ago = now - 3600
     
     if ip not in limits:
-        limits[ip] = {'count': 1, 'first_request': now, 'last_request': now}
+        limits[ip] = {'count': 1, 'first_request': now}
         save_json(IP_LIMIT_FILE, limits)
         return True
     
@@ -141,7 +134,6 @@ def check_ip_limit(ip):
     if record['first_request'] < hour_ago:
         record['count'] = 1
         record['first_request'] = now
-        record['last_request'] = now
         save_json(IP_LIMIT_FILE, limits)
         return True
     
@@ -149,10 +141,41 @@ def check_ip_limit(ip):
         return False
     
     record['count'] += 1
-    record['last_request'] = now
     save_json(IP_LIMIT_FILE, limits)
     return True
 
+# ========== KHỞI TẠO DATABASE LICENSE ==========
+def init_license_db():
+    with closing(sqlite3.connect(LICENSE_DB)) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS licenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                license_key TEXT UNIQUE NOT NULL,
+                hwid TEXT,
+                status TEXT DEFAULT 'active',
+                expires_at TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                last_login TEXT,
+                login_ip TEXT,
+                note TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS hwid_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                license_key TEXT,
+                hwid TEXT,
+                ip TEXT,
+                status TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        send_tg("✅ Database license đã khởi tạo thành công!")
+
+init_license_db()
+
+# ========== TẠO LINK RÚT GỌN ==========
 def short_link(service, url):
     try:
         enc = urllib.parse.quote(url, safe='')
@@ -170,14 +193,15 @@ def short_link(service, url):
     except: pass
     return url
 
-def create_key(expires_hours=24, note=""):
+# ========== QUẢN LÝ KEY WEB ==========
+def create_web_key(expires_hours=24, note=""):
     key = gen_key()
     keys = load_json(KEYS_FILE, {})
     keys[key] = {'expires': (datetime.now() + timedelta(hours=expires_hours)).isoformat(), 'used': False, 'created': datetime.now().isoformat(), 'note': note}
     save_json(KEYS_FILE, keys)
     return key
 
-def use_key(key, fp, ip):
+def use_web_key(key, fp, ip):
     keys = load_json(KEYS_FILE, {})
     if key not in keys: return False, "Key không tồn tại"
     info = keys[key]
@@ -190,6 +214,7 @@ def use_key(key, fp, ip):
     save_json(KEYS_FILE, keys)
     return True, "OK"
 
+# ========== QUẢN LÝ TASK WEB ==========
 def create_task(sid, fp, ip_info):
     tasks = load_json(TASKS_FILE, {})
     tasks[sid] = {
@@ -199,8 +224,6 @@ def create_task(sid, fp, ip_info):
         'fp': fp, 
         'ip': ip_info['ip'],
         'port': ip_info['port'],
-        'xff': ip_info['xff'],
-        'source': ip_info['source'],
         'user_agent': ip_info['user_agent'],
         'created': datetime.now().isoformat()
     }
@@ -222,7 +245,161 @@ def update_earnings(service, amount, link, sid, ip, fp):
     if len(earn['trans']) > 500: earn['trans'] = earn['trans'][-500:]
     save_json(EARNINGS_FILE, earn)
 
-# ========== HTML TEMPLATES ==========
+# ========== API TẠO LICENSE (ADMIN) ==========
+@app.route('/api/create_license', methods=['POST'])
+def api_create_license():
+    auth = request.authorization
+    if not auth or auth.username != ADMIN_USERNAME or auth.password != ADMIN_PASSWORD:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    
+    data = request.json
+    days = data.get('days', 30)
+    note = data.get('note', '')
+    
+    license_key = gen_key()
+    expires_at = (datetime.now() + timedelta(days=days)).isoformat()
+    
+    with closing(sqlite3.connect(LICENSE_DB)) as conn:
+        conn.execute(
+            "INSERT INTO licenses (license_key, expires_at, note) VALUES (?, ?, ?)",
+            (license_key, expires_at, note)
+        )
+        conn.commit()
+    
+    send_tg(f"🔑 LICENSE MỚI: {license_key}\n📅 Hạn: {days} ngày\n📝 {note}")
+    
+    return jsonify({
+        'status': 'success',
+        'license_key': license_key,
+        'expires_at': expires_at
+    })
+
+# ========== API XÁC THỰC HWID (CHO SCRIPT) ==========
+@app.route('/api/verify_hwid', methods=['POST'])
+def api_verify_hwid():
+    """Script gửi key + HWID lên xác thực - BẢO MẬT CAO"""
+    data = request.json
+    license_key = data.get('key', '').strip().upper()
+    hwid = data.get('hwid', '').strip()
+    ip = get_real_ip()
+    timestamp = data.get('ts', '')
+    signature = data.get('sig', '')
+    
+    # Lớp bảo mật 1: Kiểm tra timestamp (chống replay attack)
+    if timestamp:
+        try:
+            ts = int(timestamp)
+            if abs(time.time() - ts) > 300:  # 5 phút
+                return jsonify({'status': 'error', 'code': 'EXPIRED', 'message': 'Request đã hết hạn'})
+        except:
+            pass
+    
+    # Lớp bảo mật 2: Kiểm tra chữ ký (chống giả mạo)
+    if signature:
+        expected = hashlib.md5(f"{license_key}{hwid}{timestamp}{ENCRYPTION_KEY}".encode()).hexdigest()[:16]
+        if not hmac.compare_digest(signature, expected):
+            return jsonify({'status': 'error', 'code': 'INVALID_SIG', 'message': 'Chữ ký không hợp lệ'})
+    
+    if not license_key or not hwid:
+        return jsonify({'status': 'error', 'code': 'MISSING_PARAMS', 'message': 'Thiếu key hoặc HWID'})
+    
+    with closing(sqlite3.connect(LICENSE_DB)) as conn:
+        conn.row_factory = sqlite3.Row
+        license_data = conn.execute(
+            "SELECT * FROM licenses WHERE license_key = ?", 
+            (license_key,)
+        ).fetchone()
+        
+        if not license_data:
+            # Ghi log thất bại
+            conn.execute(
+                "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
+                (license_key, hwid, ip, 'invalid_key')
+            )
+            conn.commit()
+            return jsonify({'status': 'error', 'code': 'INVALID_KEY', 'message': 'Key không tồn tại'})
+        
+        # Lớp bảo mật 3: Kiểm tra hết hạn
+        expires_at = datetime.fromisoformat(license_data['expires_at'])
+        if datetime.now() > expires_at:
+            conn.execute(
+                "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
+                (license_key, hwid, ip, 'expired')
+            )
+            conn.commit()
+            return jsonify({'status': 'error', 'code': 'EXPIRED', 'message': f'Key đã hết hạn từ {license_data["expires_at"]}'})
+        
+        # Lớp bảo mật 4: Kiểm tra trạng thái
+        if license_data['status'] != 'active':
+            return jsonify({'status': 'error', 'code': 'INACTIVE', 'message': 'Key đã bị vô hiệu hóa'})
+        
+        # Lớp bảo mật 5: Kiểm tra HWID (nếu đã có)
+        stored_hwid = license_data['hwid']
+        if stored_hwid and stored_hwid != hwid:
+            conn.execute(
+                "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
+                (license_key, hwid, ip, 'hwid_mismatch')
+            )
+            conn.commit()
+            send_tg(f"⚠️ CẢNH BÁO: Key {license_key} bị cố gắng dùng từ HWID khác!\nIP: {ip}\nHWID cũ: {stored_hwid}\nHWID mới: {hwid}")
+            return jsonify({'status': 'error', 'code': 'HWID_MISMATCH', 'message': 'HWID không khớp với key này'})
+        
+        # Lần đầu kích hoạt - gán HWID
+        if not stored_hwid:
+            conn.execute(
+                "UPDATE licenses SET hwid = ?, last_login = ?, login_ip = ? WHERE license_key = ?",
+                (hwid, datetime.now().isoformat(), ip, license_key)
+            )
+        
+        # Ghi log thành công
+        conn.execute(
+            "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
+            (license_key, hwid, ip, 'success')
+        )
+        conn.commit()
+        
+        send_tg(f"✅ XÁC THỰC THÀNH CÔNG\n🔑 Key: {license_key}\n🖥️ HWID: {hwid[:16]}...\n🌐 IP: {ip}")
+        
+        return jsonify({
+            'status': 'success',
+            'code': 'SUCCESS',
+            'message': 'Xác thực thành công',
+            'expires_at': license_data['expires_at'],
+            'days_left': max(0, (datetime.fromisoformat(license_data['expires_at']) - datetime.now()).days)
+        })
+
+# ========== API LẤY THÔNG TIN LICENSE ==========
+@app.route('/api/license_info', methods=['POST'])
+def api_license_info():
+    data = request.json
+    license_key = data.get('key', '').strip().upper()
+    
+    if not license_key:
+        return jsonify({'status': 'error', 'message': 'Thiếu key'})
+    
+    with closing(sqlite3.connect(LICENSE_DB)) as conn:
+        conn.row_factory = sqlite3.Row
+        license_data = conn.execute(
+            "SELECT license_key, status, expires_at, created_at, note FROM licenses WHERE license_key = ?", 
+            (license_key,)
+        ).fetchone()
+        
+        if not license_data:
+            return jsonify({'status': 'error', 'message': 'Key không tồn tại'})
+        
+        return jsonify({
+            'status': 'success',
+            'license_key': license_data['license_key'],
+            'status': license_data['status'],
+            'expires_at': license_data['expires_at'],
+            'created_at': license_data['created_at'],
+            'note': license_data['note']
+        })
+
+# ========== KHÓA BÍ MẬT CHO SIGNATURE ==========
+ENCRYPTION_KEY = secrets.token_hex(32)
+
+# ========== HTML TEMPLATES (RÚT GỌN - GIỮ NGUYÊN GIAO DIỆN) ==========
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -256,10 +433,10 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></td>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2></table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></table>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></table>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table></div><div class="card"><h2>📋 Key gần đây</h2><table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table></div></div></body></html>
 """
 
-# ========== ROUTES ==========
+# ========== ROUTES WEB ==========
 @app.route('/')
 def index():
     return render_template_string(INDEX_HTML)
@@ -274,23 +451,13 @@ def getkey():
         return render_template_string(ERROR_HTML, msg="Truy cập bị chặn!")
     
     if not check_ip_limit(ip):
-        block(ip, fp, f"Spam key - vượt quá giới hạn 3 key/giờ | Port: {ip_info['port']}")
+        block(ip, fp, f"Spam key - vượt quá giới hạn 3 key/giờ")
         return render_template_string(ERROR_HTML, msg="Quá nhiều yêu cầu! Thử lại sau 1 giờ.")
     
     sid = gen_sid()
     create_task(sid, fp, ip_info)
     
-    # Gửi Telegram với IP và Port chi tiết
-    send_tg(f"""
-👤 <b>TRUY CẬP MỚI</b>
-━━━━━━━━━━━━━━━
-🌐 <b>IP:</b> {ip_info['ip']}
-🔌 <b>Port:</b> {ip_info['port']}
-📡 <b>Nguồn:</b> {ip_info['source']}
-🆔 <b>Session:</b> {sid[:8]}...
-📱 <b>UA:</b> {ip_info['user_agent'][:50]}...
-⏰ {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}
-    """)
+    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip_info['ip']}:{ip_info['port']} | SID: {sid[:8]}")
     
     return redirect(f'/step/{sid}/1')
 
@@ -325,7 +492,7 @@ def task_complete(sid, s):
         update_earnings(service, amount, task.get(url_field, ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
         
         if s == 2:
-            key = create_key(24, f"Session {sid}")
+            key = create_web_key(24, f"Session {sid}")
             task['key'] = key
             save_json(TASKS_FILE, tasks)
             send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}:{task.get('port', 'unknown')}")
@@ -376,7 +543,7 @@ def verify():
     admin_keys = ["QANHNO1CRACKER", "DRAGONLOCUT"]
     if key in admin_keys:
         return jsonify({'status': 'success', 'message': 'Kích hoạt thành công!'})
-    success, msg = use_key(key, fp, ip)
+    success, msg = use_web_key(key, fp, ip)
     if success:
         send_tg(f"✅ KEY ĐÃ DÙNG: {key} | IP: {ip}")
         return jsonify({'status': 'success', 'message': 'Key hợp lệ!'})
@@ -411,7 +578,7 @@ def admin():
 @admin_auth
 def admin_create():
     note = request.form.get('note', '')
-    key = create_key(720, note)
+    key = create_web_key(720, note)
     send_tg(f"👑 Admin tạo key: {key}")
     return redirect('/admin')
 
