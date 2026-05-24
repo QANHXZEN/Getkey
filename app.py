@@ -20,7 +20,8 @@ app.secret_key = secrets.token_hex(32)
 
 # ========== CẤU HÌNH ==========
 LINK4M_API_KEY = "65c47d157fbdff4d79625e57"
-YEUMONEY_API_KEY = "4e3bbf63ff3ac2f780f246675412f35c3f31946a74f195992dbaf2a6d6c26eee"
+TRAFFICVN_API_KEY = "eef4080ff90f6180b109ecc46a78f33b"
+TRAFFICVN_API_URL = "https://trafficvn.com/api"
 YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"
 TELEGRAM_BOT_TOKEN = "8448578289:AAH2Pp6s3V1Le-cV5I1Qc-gFKQzTDBMXnvA"
 TELEGRAM_CHAT_ID = "8588555065"
@@ -33,7 +34,6 @@ TASKS_FILE = "tasks.json"
 BLACKLIST_FILE = "blacklist.json"
 EARNINGS_FILE = "earnings.json"
 IP_LIMIT_FILE = "ip_limit.json"
-HWID_WHITELIST_FILE = "hwid_whitelist.json"
 LICENSE_DB = "licenses.db"
 
 # ========== HÀM LẤY IP THẬT ==========
@@ -171,7 +171,6 @@ def init_license_db():
             )
         """)
         conn.commit()
-        send_tg("✅ Database license đã khởi tạo thành công!")
 
 init_license_db()
 
@@ -179,18 +178,22 @@ init_license_db()
 def short_link(service, url):
     try:
         enc = urllib.parse.quote(url, safe='')
-        if service == 'yeumoney':
-            r = requests.get(f"https://yeumoney.com/QL_api.php?token={YEUMONEY_API_KEY}&url={enc}&format=json", timeout=5)
+        if service == 'trafficvn':
+            # TrafficVN API
+            api_url = f"{TRAFFICVN_API_URL}?api_key={TRAFFICVN_API_KEY}&url={enc}&format=json"
+            r = requests.get(api_url, timeout=10)
             if r.status_code == 200:
                 d = r.json()
-                return d.get('shortenedUrl') or d.get('shortUrl') or url
+                # TrafficVN trả về link trong field 'shortenedUrl' hoặc 'short_url'
+                return d.get('shortenedUrl') or d.get('short_url') or d.get('url') or url
         elif service == 'link4m':
             r = requests.get(f"https://link4m.co/api-shorten/v2?api={LINK4M_API_KEY}&url={enc}", timeout=5)
             if r.status_code == 200:
                 d = r.json()
                 if d.get('status') == 'success' and d.get('shortenedUrl'):
                     return d.get('shortenedUrl')
-    except: pass
+    except Exception as e:
+        print(f"Lỗi {service}: {e}")
     return url
 
 # ========== QUẢN LÝ KEY WEB ==========
@@ -219,7 +222,7 @@ def create_task(sid, fp, ip_info):
     tasks = load_json(TASKS_FILE, {})
     tasks[sid] = {
         'step': 1, 's1': False, 's2': False,
-        'url1': short_link('yeumoney', f"{YOUR_DOMAIN}/task/{sid}/1"),
+        'url1': short_link('trafficvn', f"{YOUR_DOMAIN}/task/{sid}/1"),
         'url2': short_link('link4m', f"{YOUR_DOMAIN}/task/{sid}/2"),
         'fp': fp, 
         'ip': ip_info['ip'],
@@ -277,28 +280,10 @@ def api_create_license():
 # ========== API XÁC THỰC HWID (CHO SCRIPT) ==========
 @app.route('/api/verify_hwid', methods=['POST'])
 def api_verify_hwid():
-    """Script gửi key + HWID lên xác thực - BẢO MẬT CAO"""
     data = request.json
     license_key = data.get('key', '').strip().upper()
     hwid = data.get('hwid', '').strip()
     ip = get_real_ip()
-    timestamp = data.get('ts', '')
-    signature = data.get('sig', '')
-    
-    # Lớp bảo mật 1: Kiểm tra timestamp (chống replay attack)
-    if timestamp:
-        try:
-            ts = int(timestamp)
-            if abs(time.time() - ts) > 300:  # 5 phút
-                return jsonify({'status': 'error', 'code': 'EXPIRED', 'message': 'Request đã hết hạn'})
-        except:
-            pass
-    
-    # Lớp bảo mật 2: Kiểm tra chữ ký (chống giả mạo)
-    if signature:
-        expected = hashlib.md5(f"{license_key}{hwid}{timestamp}{ENCRYPTION_KEY}".encode()).hexdigest()[:16]
-        if not hmac.compare_digest(signature, expected):
-            return jsonify({'status': 'error', 'code': 'INVALID_SIG', 'message': 'Chữ ký không hợp lệ'})
     
     if not license_key or not hwid:
         return jsonify({'status': 'error', 'code': 'MISSING_PARAMS', 'message': 'Thiếu key hoặc HWID'})
@@ -311,7 +296,6 @@ def api_verify_hwid():
         ).fetchone()
         
         if not license_data:
-            # Ghi log thất bại
             conn.execute(
                 "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
                 (license_key, hwid, ip, 'invalid_key')
@@ -319,7 +303,6 @@ def api_verify_hwid():
             conn.commit()
             return jsonify({'status': 'error', 'code': 'INVALID_KEY', 'message': 'Key không tồn tại'})
         
-        # Lớp bảo mật 3: Kiểm tra hết hạn
         expires_at = datetime.fromisoformat(license_data['expires_at'])
         if datetime.now() > expires_at:
             conn.execute(
@@ -327,13 +310,11 @@ def api_verify_hwid():
                 (license_key, hwid, ip, 'expired')
             )
             conn.commit()
-            return jsonify({'status': 'error', 'code': 'EXPIRED', 'message': f'Key đã hết hạn từ {license_data["expires_at"]}'})
+            return jsonify({'status': 'error', 'code': 'EXPIRED', 'message': f'Key đã hết hạn'})
         
-        # Lớp bảo mật 4: Kiểm tra trạng thái
         if license_data['status'] != 'active':
             return jsonify({'status': 'error', 'code': 'INACTIVE', 'message': 'Key đã bị vô hiệu hóa'})
         
-        # Lớp bảo mật 5: Kiểm tra HWID (nếu đã có)
         stored_hwid = license_data['hwid']
         if stored_hwid and stored_hwid != hwid:
             conn.execute(
@@ -341,17 +322,15 @@ def api_verify_hwid():
                 (license_key, hwid, ip, 'hwid_mismatch')
             )
             conn.commit()
-            send_tg(f"⚠️ CẢNH BÁO: Key {license_key} bị cố gắng dùng từ HWID khác!\nIP: {ip}\nHWID cũ: {stored_hwid}\nHWID mới: {hwid}")
-            return jsonify({'status': 'error', 'code': 'HWID_MISMATCH', 'message': 'HWID không khớp với key này'})
+            send_tg(f"⚠️ CẢNH BÁO: Key {license_key} bị cố gắng dùng từ HWID khác!\nIP: {ip}")
+            return jsonify({'status': 'error', 'code': 'HWID_MISMATCH', 'message': 'HWID không khớp'})
         
-        # Lần đầu kích hoạt - gán HWID
         if not stored_hwid:
             conn.execute(
                 "UPDATE licenses SET hwid = ?, last_login = ?, login_ip = ? WHERE license_key = ?",
                 (hwid, datetime.now().isoformat(), ip, license_key)
             )
         
-        # Ghi log thành công
         conn.execute(
             "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
             (license_key, hwid, ip, 'success')
@@ -396,10 +375,10 @@ def api_license_info():
             'note': license_data['note']
         })
 
-# ========== KHÓA BÍ MẬT CHO SIGNATURE ==========
+# ========== KHÓA BÍ MẬT ==========
 ENCRYPTION_KEY = secrets.token_hex(32)
 
-# ========== HTML TEMPLATES (RÚT GỌN - GIỮ NGUYÊN GIAO DIỆN) ==========
+# ========== HTML TEMPLATES ==========
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
@@ -433,7 +412,7 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></table>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table></div><div class="card"><h2>📋 Key gần đây</h2><table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table></div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th><tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
 """
 
 # ========== ROUTES WEB ==========
@@ -467,7 +446,7 @@ def step_page(sid, s):
     if not task:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
     cfg = {
-        1: {'title': '💰 BƯỚC 1: YEUMONEY', 'desc': 'Hoàn thành nhiệm vụ trên Yeumoney.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
+        1: {'title': '🚀 BƯỚC 1: TRAFFICVN', 'desc': 'Hoàn thành nhiệm vụ trên TrafficVN.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
         2: {'title': '🔗 BƯỚC 2: LINK4M', 'desc': 'Hoàn thành nhiệm vụ cuối cùng', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'}
     }
     c = cfg.get(s)
@@ -486,7 +465,7 @@ def task_complete(sid, s):
         task[field] = True
         task['step'] = s + 1
         save_json(TASKS_FILE, tasks)
-        service = {1: 'yeumoney', 2: 'link4m'}[s]
+        service = {1: 'trafficvn', 2: 'link4m'}[s]
         amount = {1: 0.001, 2: 0.002}[s]
         url_field = f'url{s}'
         update_earnings(service, amount, task.get(url_field, ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
