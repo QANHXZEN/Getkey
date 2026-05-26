@@ -11,9 +11,6 @@ import time
 from functools import wraps
 import re
 import urllib.parse
-import threading
-import sqlite3
-from contextlib import closing
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -21,49 +18,23 @@ app.secret_key = secrets.token_hex(32)
 # ========== CẤU HÌNH ==========
 LINK4M_API_KEY = "65c47d157fbdff4d79625e57"
 TRAFFICVN_API_KEY = "eef4080ff90f6180b109ecc46a78f33b"
-TRAFFICVN_API_URL = "https://trafficvn.com/api"
 YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"
 TELEGRAM_BOT_TOKEN = "8448578289:AAH2Pp6s3V1Le-cV5I1Qc-gFKQzTDBMXnvA"
 TELEGRAM_CHAT_ID = "8588555065"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "Dragon@2024"
 
-# ========== FILE LƯU TRỮ ==========
 KEYS_FILE = "keys.json"
 TASKS_FILE = "tasks.json"
 BLACKLIST_FILE = "blacklist.json"
-EARNINGS_FILE = "earnings.json"
-IP_LIMIT_FILE = "ip_limit.json"
-LICENSE_DB = "licenses.db"
-
-# ========== HÀM LẤY IP THẬT ==========
-def get_real_ip_with_port():
-    cf_ip = request.headers.get('Cf-Connecting-Ip')
-    xff = request.headers.get('X-Forwarded-For', '')
-    xff_ip = xff.split(',')[0].strip() if xff else None
-    port = request.environ.get('REMOTE_PORT', 'unknown')
-    
-    if cf_ip:
-        final_ip = cf_ip
-        source = 'cloudflare'
-    elif xff_ip:
-        final_ip = xff_ip
-        source = 'x-forwarded-for'
-    else:
-        final_ip = request.remote_addr
-        source = 'remote_addr'
-    
-    return {
-        'ip': final_ip,
-        'port': port,
-        'source': source,
-        'user_agent': request.headers.get('User-Agent', 'unknown')[:100]
-    }
 
 def get_real_ip():
-    return get_real_ip_with_port()['ip']
+    cf = request.headers.get('Cf-Connecting-Ip')
+    if cf: return cf
+    xff = request.headers.get('X-Forwarded-For')
+    if xff: return xff.split(',')[0].strip()
+    return request.remote_addr
 
-# ========== ĐỌC/GHI FILE JSON ==========
 def load_json(f, d=None):
     if d is None: d = {}
     if not os.path.exists(f): return d
@@ -77,14 +48,12 @@ def save_json(f, d):
         return True
     except: return False
 
-# ========== TELEGRAM ==========
 def send_tg(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                       json={'chat_id': TELEGRAM_CHAT_ID, 'text': msg[:4000], 'parse_mode': 'HTML'}, timeout=5)
     except: pass
 
-# ========== SINH KEY ==========
 def gen_key():
     p1 = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     p2 = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
@@ -98,93 +67,23 @@ def verify_key(key):
     if not m: return False
     return m.group(1) == hashlib.md5(key[:-3].encode()).hexdigest()[:2].upper()
 
-# ========== FINGERPRINT ==========
 def get_fp():
-    info = get_real_ip_with_port()
-    fp_str = f"{info['ip']}:{info['port']}|{info['user_agent']}|{request.headers.get('Accept-Language', '')}"
-    return hashlib.sha256(fp_str.encode()).hexdigest()[:32]
+    return hashlib.sha256(f"{get_real_ip()}|{request.headers.get('User-Agent', 'unknown')}".encode()).hexdigest()[:32]
 
 def gen_sid():
     return secrets.token_hex(16)
 
-# ========== BLACKLIST ==========
 def is_blocked(ip, fp):
     b = load_json(BLACKLIST_FILE, {'ips': [], 'fps': []})
     return ip in b.get('ips', []) or fp in b.get('fps', [])
 
-def block(ip, fp, reason):
-    b = load_json(BLACKLIST_FILE, {'ips': [], 'fps': []})
-    if ip and ip not in b['ips']: b['ips'].append(ip)
-    if fp and fp not in b['fps']: b['fps'].append(fp)
-    save_json(BLACKLIST_FILE, b)
-    send_tg(f"🚫 BLACKLIST: {ip} | {reason}")
-
-# ========== GIỚI HẠN IP ==========
-def check_ip_limit(ip):
-    limits = load_json(IP_LIMIT_FILE, {})
-    now = time.time()
-    hour_ago = now - 3600
-    
-    if ip not in limits:
-        limits[ip] = {'count': 1, 'first_request': now}
-        save_json(IP_LIMIT_FILE, limits)
-        return True
-    
-    record = limits[ip]
-    if record['first_request'] < hour_ago:
-        record['count'] = 1
-        record['first_request'] = now
-        save_json(IP_LIMIT_FILE, limits)
-        return True
-    
-    if record['count'] >= 3:
-        return False
-    
-    record['count'] += 1
-    save_json(IP_LIMIT_FILE, limits)
-    return True
-
-# ========== KHỞI TẠO DATABASE LICENSE ==========
-def init_license_db():
-    with closing(sqlite3.connect(LICENSE_DB)) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS licenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                license_key TEXT UNIQUE NOT NULL,
-                hwid TEXT,
-                status TEXT DEFAULT 'active',
-                expires_at TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                last_login TEXT,
-                login_ip TEXT,
-                note TEXT
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS hwid_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                license_key TEXT,
-                hwid TEXT,
-                ip TEXT,
-                status TEXT,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
-
-init_license_db()
-
-# ========== TẠO LINK RÚT GỌN ==========
 def short_link(service, url):
     try:
         enc = urllib.parse.quote(url, safe='')
         if service == 'trafficvn':
-            # TrafficVN API
-            api_url = f"{TRAFFICVN_API_URL}?api_key={TRAFFICVN_API_KEY}&url={enc}&format=json"
-            r = requests.get(api_url, timeout=10)
+            r = requests.get(f"https://trafficvn.com/api?api_key={TRAFFICVN_API_KEY}&url={enc}&format=json", timeout=10)
             if r.status_code == 200:
                 d = r.json()
-                # TrafficVN trả về link trong field 'shortenedUrl' hoặc 'short_url'
                 return d.get('shortenedUrl') or d.get('short_url') or d.get('url') or url
         elif service == 'link4m':
             r = requests.get(f"https://link4m.co/api-shorten/v2?api={LINK4M_API_KEY}&url={enc}", timeout=5)
@@ -192,219 +91,96 @@ def short_link(service, url):
                 d = r.json()
                 if d.get('status') == 'success' and d.get('shortenedUrl'):
                     return d.get('shortenedUrl')
-    except Exception as e:
-        print(f"Lỗi {service}: {e}")
+    except: pass
     return url
 
-# ========== QUẢN LÝ KEY WEB ==========
-def create_web_key(expires_hours=24, note=""):
+def create_web_key(expires_hours=24):
     key = gen_key()
     keys = load_json(KEYS_FILE, {})
-    keys[key] = {'expires': (datetime.now() + timedelta(hours=expires_hours)).isoformat(), 'used': False, 'created': datetime.now().isoformat(), 'note': note}
+    keys[key] = {'expires': (datetime.now() + timedelta(hours=expires_hours)).isoformat(), 'used': False, 'created': datetime.now().isoformat()}
     save_json(KEYS_FILE, keys)
     return key
-
-def use_web_key(key, fp, ip):
-    keys = load_json(KEYS_FILE, {})
-    if key not in keys: return False, "Key không tồn tại"
-    info = keys[key]
-    if datetime.now() > datetime.fromisoformat(info['expires']): return False, "Key hết hạn"
-    if info.get('used'): return False, "Key đã dùng"
-    info['used'] = True
-    info['used_at'] = datetime.now().isoformat()
-    info['used_by'] = fp
-    info['used_ip'] = ip
-    save_json(KEYS_FILE, keys)
-    return True, "OK"
-
-# ========== QUẢN LÝ TASK WEB ==========
-def create_task(sid, fp, ip_info):
-    tasks = load_json(TASKS_FILE, {})
-    tasks[sid] = {
-        'step': 1, 's1': False, 's2': False,
-        'url1': short_link('trafficvn', f"{YOUR_DOMAIN}/task/{sid}/1"),
-        'url2': short_link('link4m', f"{YOUR_DOMAIN}/task/{sid}/2"),
-        'fp': fp, 
-        'ip': ip_info['ip'],
-        'port': ip_info['port'],
-        'user_agent': ip_info['user_agent'],
-        'created': datetime.now().isoformat()
-    }
-    save_json(TASKS_FILE, tasks)
-    return tasks[sid]
-
-def get_task(sid):
-    return load_json(TASKS_FILE, {}).get(sid)
-
-def update_earnings(service, amount, link, sid, ip, fp):
-    earn = load_json(EARNINGS_FILE, {})
-    today = datetime.now().strftime('%Y-%m-%d')
-    if 'daily' not in earn: earn['daily'] = {}
-    if today not in earn['daily']: earn['daily'][today] = {}
-    earn['daily'][today][service] = earn['daily'][today].get(service, 0) + amount
-    earn['total'] = earn.get('total', 0) + amount
-    if 'trans' not in earn: earn['trans'] = []
-    earn['trans'].append({'time': datetime.now().isoformat(), 'service': service, 'amount': amount, 'link': link, 'sid': sid, 'ip': ip})
-    if len(earn['trans']) > 500: earn['trans'] = earn['trans'][-500:]
-    save_json(EARNINGS_FILE, earn)
-
-# ========== API TẠO LICENSE (ADMIN) ==========
-@app.route('/api/create_license', methods=['POST'])
-def api_create_license():
-    auth = request.authorization
-    if not auth or auth.username != ADMIN_USERNAME or auth.password != ADMIN_PASSWORD:
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
-    
-    data = request.json
-    days = data.get('days', 30)
-    note = data.get('note', '')
-    
-    license_key = gen_key()
-    expires_at = (datetime.now() + timedelta(days=days)).isoformat()
-    
-    with closing(sqlite3.connect(LICENSE_DB)) as conn:
-        conn.execute(
-            "INSERT INTO licenses (license_key, expires_at, note) VALUES (?, ?, ?)",
-            (license_key, expires_at, note)
-        )
-        conn.commit()
-    
-    send_tg(f"🔑 LICENSE MỚI: {license_key}\n📅 Hạn: {days} ngày\n📝 {note}")
-    
-    return jsonify({
-        'status': 'success',
-        'license_key': license_key,
-        'expires_at': expires_at
-    })
-
-# ========== API XÁC THỰC HWID (CHO SCRIPT) ==========
-@app.route('/api/verify_hwid', methods=['POST'])
-def api_verify_hwid():
-    data = request.json
-    license_key = data.get('key', '').strip().upper()
-    hwid = data.get('hwid', '').strip()
-    ip = get_real_ip()
-    
-    if not license_key or not hwid:
-        return jsonify({'status': 'error', 'code': 'MISSING_PARAMS', 'message': 'Thiếu key hoặc HWID'})
-    
-    with closing(sqlite3.connect(LICENSE_DB)) as conn:
-        conn.row_factory = sqlite3.Row
-        license_data = conn.execute(
-            "SELECT * FROM licenses WHERE license_key = ?", 
-            (license_key,)
-        ).fetchone()
-        
-        if not license_data:
-            conn.execute(
-                "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
-                (license_key, hwid, ip, 'invalid_key')
-            )
-            conn.commit()
-            return jsonify({'status': 'error', 'code': 'INVALID_KEY', 'message': 'Key không tồn tại'})
-        
-        expires_at = datetime.fromisoformat(license_data['expires_at'])
-        if datetime.now() > expires_at:
-            conn.execute(
-                "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
-                (license_key, hwid, ip, 'expired')
-            )
-            conn.commit()
-            return jsonify({'status': 'error', 'code': 'EXPIRED', 'message': f'Key đã hết hạn'})
-        
-        if license_data['status'] != 'active':
-            return jsonify({'status': 'error', 'code': 'INACTIVE', 'message': 'Key đã bị vô hiệu hóa'})
-        
-        stored_hwid = license_data['hwid']
-        if stored_hwid and stored_hwid != hwid:
-            conn.execute(
-                "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
-                (license_key, hwid, ip, 'hwid_mismatch')
-            )
-            conn.commit()
-            send_tg(f"⚠️ CẢNH BÁO: Key {license_key} bị cố gắng dùng từ HWID khác!\nIP: {ip}")
-            return jsonify({'status': 'error', 'code': 'HWID_MISMATCH', 'message': 'HWID không khớp'})
-        
-        if not stored_hwid:
-            conn.execute(
-                "UPDATE licenses SET hwid = ?, last_login = ?, login_ip = ? WHERE license_key = ?",
-                (hwid, datetime.now().isoformat(), ip, license_key)
-            )
-        
-        conn.execute(
-            "INSERT INTO hwid_logs (license_key, hwid, ip, status) VALUES (?, ?, ?, ?)",
-            (license_key, hwid, ip, 'success')
-        )
-        conn.commit()
-        
-        send_tg(f"✅ XÁC THỰC THÀNH CÔNG\n🔑 Key: {license_key}\n🖥️ HWID: {hwid[:16]}...\n🌐 IP: {ip}")
-        
-        return jsonify({
-            'status': 'success',
-            'code': 'SUCCESS',
-            'message': 'Xác thực thành công',
-            'expires_at': license_data['expires_at'],
-            'days_left': max(0, (datetime.fromisoformat(license_data['expires_at']) - datetime.now()).days)
-        })
-
-# ========== API LẤY THÔNG TIN LICENSE ==========
-@app.route('/api/license_info', methods=['POST'])
-def api_license_info():
-    data = request.json
-    license_key = data.get('key', '').strip().upper()
-    
-    if not license_key:
-        return jsonify({'status': 'error', 'message': 'Thiếu key'})
-    
-    with closing(sqlite3.connect(LICENSE_DB)) as conn:
-        conn.row_factory = sqlite3.Row
-        license_data = conn.execute(
-            "SELECT license_key, status, expires_at, created_at, note FROM licenses WHERE license_key = ?", 
-            (license_key,)
-        ).fetchone()
-        
-        if not license_data:
-            return jsonify({'status': 'error', 'message': 'Key không tồn tại'})
-        
-        return jsonify({
-            'status': 'success',
-            'license_key': license_data['license_key'],
-            'status': license_data['status'],
-            'expires_at': license_data['expires_at'],
-            'created_at': license_data['created_at'],
-            'note': license_data['note']
-        })
-
-# ========== KHÓA BÍ MẬT ==========
-ENCRYPTION_KEY = secrets.token_hex(32)
 
 # ========== HTML TEMPLATES ==========
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>DRAGON PINGX PREMIUM</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a 0%,#0f0f1a 50%,#0a0a0a 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}.star{position:fixed;width:2px;height:2px;background:#fff;border-radius:50%;animation:shoot 4s linear infinite;z-index:1}@keyframes shoot{0%{transform:translateX(0)translateY(0);opacity:0}10%{opacity:1}20%{opacity:1}30%{opacity:0}100%{transform:translateX(-200px)translateY(200px);opacity:0}}.glow{position:fixed;width:400px;height:400px;background:radial-gradient(circle,rgba(176,0,255,0.1),transparent);border-radius:50%;pointer-events:none;z-index:1;transition:all 0.3s ease}.hero{text-align:center;max-width:650px;animation:fadeUp 0.8s;z-index:2}@keyframes fadeUp{from{opacity:0;transform:translateY(50px)}to{opacity:1;transform:translateY(0)}}.badge{display:inline-block;background:rgba(176,0,255,0.15);backdrop-filter:blur(10px);padding:8px 24px;border-radius:100px;font-size:12px;font-weight:600;color:#b000ff;border:1px solid rgba(176,0,255,0.4);margin-bottom:30px;animation:pulse 2s infinite}@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(176,0,255,0.4)}50%{box-shadow:0 0 0 20px rgba(176,0,255,0)}}h1{font-size:60px;font-weight:800;background:linear-gradient(135deg,#fff,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px;animation:gradient 4s infinite}@keyframes gradient{0%{background-position:0%50%}50%{background-position:100%50%}100%{background-position:0%50%}}.sub{font-size:16px;color:#aaa;margin-bottom:30px;line-height:1.6}.btn{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:16px 45px;font-size:16px;font-weight:600;color:#fff;border-radius:60px;display:inline-flex;align-items:center;gap:10px;text-decoration:none;box-shadow:0 5px 20px rgba(176,0,255,0.4);transition:0.3s}.btn:hover{transform:translateY(-5px) scale(1.05)}.stats{display:flex;justify-content:center;gap:40px;margin-top:50px;padding-top:30px;border-top:1px solid rgba(176,0,255,0.2)}.stat-number{font-size:28px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent}.stat-label{font-size:12px;color:#888;margin-top:5px}</style></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>DRAGON PINGX PREMIUM</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a 0%,#0f0f1a 50%,#0a0a0a 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
+.star{position:fixed;width:2px;height:2px;background:#fff;border-radius:50%;animation:shoot 4s linear infinite;z-index:1}
+@keyframes shoot{0%{transform:translateX(0)translateY(0);opacity:0}10%{opacity:1}20%{opacity:1}30%{opacity:0}100%{transform:translateX(-200px)translateY(200px);opacity:0}}
+.glow{position:fixed;width:400px;height:400px;background:radial-gradient(circle,rgba(176,0,255,0.1),transparent);border-radius:50%;pointer-events:none;z-index:1;transition:all 0.3s ease}
+.hero{text-align:center;max-width:650px;animation:fadeUp 0.8s;z-index:2}
+@keyframes fadeUp{from{opacity:0;transform:translateY(50px)}to{opacity:1;transform:translateY(0)}}
+.badge{display:inline-block;background:rgba(176,0,255,0.15);backdrop-filter:blur(10px);padding:8px 24px;border-radius:100px;font-size:12px;font-weight:600;color:#b000ff;border:1px solid rgba(176,0,255,0.4);margin-bottom:30px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(176,0,255,0.4)}50%{box-shadow:0 0 0 20px rgba(176,0,255,0)}}
+h1{font-size:60px;font-weight:800;background:linear-gradient(135deg,#fff,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px;animation:gradient 4s infinite}
+@keyframes gradient{0%{background-position:0%50%}50%{background-position:100%50%}100%{background-position:0%50%}}
+.sub{font-size:16px;color:#aaa;margin-bottom:30px;line-height:1.6}
+.btn{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:16px 45px;font-size:16px;font-weight:600;color:#fff;border-radius:60px;display:inline-flex;align-items:center;gap:10px;text-decoration:none;box-shadow:0 5px 20px rgba(176,0,255,0.4);transition:0.3s}
+.btn:hover{transform:translateY(-5px) scale(1.05)}
+.stats{display:flex;justify-content:center;gap:40px;margin-top:50px;padding-top:30px;border-top:1px solid rgba(176,0,255,0.2)}
+.stat-number{font-size:28px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent}
+.stat-label{font-size:12px;color:#888;margin-top:5px}
+</style></head>
 <body><div id="g1" class="glow" style="top:-150px;left:-150px"></div><div id="g2" class="glow" style="bottom:-150px;right:-150px"></div><div class="hero"><div class="badge">✨ DRAGON PINGX PREMIUM | CHÍNH THỨC ✨</div><h1>DRAGON PINGX</h1><div class="sub">⚡ Hệ thống kích hoạt bản quyền tự động ⚡<br>🔒 Bảo mật tuyệt đối - 🚀 Tốc độ thần tốc</div><a href="/getkey" class="btn">🎁 NHẬN KEY MIỄN PHÍ →</a><div class="stats"><div><div class="stat-number">24/7</div><div class="stat-label">Hỗ trợ</div></div><div><div class="stat-number">2.5K+</div><div class="stat-label">Người dùng</div></div><div><div class="stat-number">100%</div><div class="stat-label">Bảo mật</div></div></div></div><script>for(let i=0;i<50;i++){let s=document.createElement('div');s.className='star';s.style.top=Math.random()*100+'%';s.style.left=Math.random()*100+'%';s.style.animationDelay=Math.random()*8+'s';document.body.appendChild(s)}document.addEventListener('mousemove',function(e){let g1=document.getElementById('g1');let g2=document.getElementById('g2');if(g1)g1.style.transform=`translate(${e.clientX*0.05}px,${e.clientY*0.05}px)`;if(g2)g2.style.transform=`translate(${-e.clientX*0.03}px,${-e.clientY*0.03}px)`})</script></body></html>
 """
 
 STEP_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Bước {{ step }} - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.card{max-width:550px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:32px;border:1px solid rgba(176,0,255,0.3);text-align:center}.step-badge{background:linear-gradient(135deg,#b000ff,#ff44ff);padding:6px 20px;border-radius:100px;font-size:12px;font-weight:600;color:#fff;display:inline-block;margin-bottom:20px}h2{font-size:28px;background:linear-gradient(135deg,#fff,#b000ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.desc{color:#aaa;margin-bottom:20px}.info{background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:12px;padding:12px;margin:15px 0;font-size:13px;color:#ffc107}.task-link{background:rgba(0,0,0,0.4);border-radius:16px;padding:16px;margin:20px 0;word-break:break-all;border:1px dashed rgba(176,0,255,0.3)}.task-link a{color:#b000ff;text-decoration:none;font-size:14px}.btn-group{display:flex;gap:16px;margin-top:24px}.btn-continue{flex:1;background:linear-gradient(135deg,#00cc66,#00ff88);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer}.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center}.warning{font-size:13px;color:#f87171;margin-top:16px;display:none}.warning.show{display:block}</style></head>
-<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/2</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a><button class="btn-continue" onclick="checkComplete()" id="continueBtn">✅ TIẾP TỤC</button></div><div class="warning" id="warningMsg">⚠️ Bạn chưa hoàn thành nhiệm vụ!</div></div><script>let sid="{{ sid }}",step={{ step }},checking=false;async function checkComplete(){if(checking)return;checking=true;const btn=document.getElementById('continueBtn'),original=btn.innerHTML;btn.innerHTML='<span class="loading"></span> Đang kiểm tra...';btn.disabled=true;document.getElementById('warningMsg').classList.remove('show');try{const res=await fetch(`/api/check/${sid}/${step}`),data=await res.json();if(data.completed){window.location.href=data.next}else{document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}catch(e){document.getElementById('warningMsg').innerHTML='⚠️ Lỗi, thử lại!';document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}</script></body></html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Bước {{ step }} - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{max-width:550px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:32px;border:1px solid rgba(176,0,255,0.3);text-align:center}
+.step-badge{background:linear-gradient(135deg,#b000ff,#ff44ff);padding:6px 20px;border-radius:100px;font-size:12px;font-weight:600;color:#fff;display:inline-block;margin-bottom:20px}
+h2{font-size:28px;background:linear-gradient(135deg,#fff,#b000ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}
+.desc{color:#aaa;margin-bottom:20px}
+.info{background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:12px;padding:12px;margin:15px 0;font-size:13px;color:#ffc107}
+.task-link{background:rgba(0,0,0,0.4);border-radius:16px;padding:16px;margin:20px 0;word-break:break-all;border:1px dashed rgba(176,0,255,0.3)}
+.task-link a{color:#b000ff;text-decoration:none;font-size:14px}
+.verify-code{background:rgba(0,0,0,0.3);border-radius:16px;padding:16px;margin:20px 0}
+.verify-code input{background:#1a1a2e;border:1px solid rgba(176,0,255,0.3);padding:12px;border-radius:8px;color:#fff;width:100%;margin-bottom:10px;text-align:center;font-size:18px;letter-spacing:4px}
+.verify-code button{background:linear-gradient(135deg,#00cc66,#00ff88);border:none;padding:12px;border-radius:8px;color:#fff;font-weight:600;cursor:pointer;width:100%}
+.btn-group{display:flex;gap:16px;margin-top:24px}
+.btn-continue{flex:1;background:linear-gradient(135deg,#00cc66,#00ff88);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer}
+.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center}
+.loading{display:inline-block;width:18px;height:18px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.warning{font-size:13px;color:#f87171;margin-top:16px;display:none}
+.warning.show{display:block}
+</style></head>
+<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/2</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="verify-code"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔐 MÃ XÁC NHẬN (lấy từ link sau khi làm task):</div><input type="text" id="code" placeholder="Nhập mã xác nhận" maxlength="20"><button onclick="submitCode()">✅ XÁC NHẬN HOÀN THÀNH</button></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a></div><div class="warning" id="warningMsg"></div></div><script>
+let sid="{{ sid }}",step={{ step }};
+function submitCode(){const code=document.getElementById('code').value.trim();if(!code){document.getElementById('warningMsg').innerHTML='⚠️ Vui lòng nhập mã xác nhận!';document.getElementById('warningMsg').classList.add('show');return;}
+document.getElementById('warningMsg').classList.remove('show');
+fetch('/api/verify_code',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sid:sid,step:step,code:code})})
+.then(res=>res.json()).then(data=>{if(data.success){window.location.href=data.next}else{document.getElementById('warningMsg').innerHTML='⚠️ '+data.message;document.getElementById('warningMsg').classList.add('show')}}).catch(()=>{document.getElementById('warningMsg').innerHTML='⚠️ Lỗi kết nối!';document.getElementById('warningMsg').classList.add('show')})}
+window.open(document.getElementById('taskLink').href,'_blank');
+</script></body></html>
 """
 
-DONE_STEP_HTML = """
+COMPLETE_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hoàn thành bước {{ step }}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}.card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4);animation:bounce 0.8s;z-index:2}@keyframes bounce{0%{opacity:0;transform:scale(0.7)}50%{transform:scale(1.05)}100%{transform:scale(1)}}.success-icon{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}h2{font-size:28px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.desc{color:#aaa;margin-bottom:30px}.btn-group{display:flex;gap:16px;margin-top:30px}.btn-next{flex:1;background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}.btn-next:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(176,0,255,0.4)}.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}.btn-back:hover{background:rgba(176,0,255,0.4)}.warning{font-size:12px;color:#666;margin-top:20px}.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:20px;margin:20px 0;border:1px dashed #b000ff}.key-value{font-family:monospace;font-size:18px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all}</style></head>
-<body><div class="card"><div class="success-icon"><svg width="35" height="35" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 HOÀN THÀNH!</h2><div class="desc">{{ message }}</div>{% if key %}<div class="key-box"><div style="font-size:11px;color:#b000ff;margin-bottom:10px">🔑 KEY CỦA BẠN</div><div class="key-value" id="licenseKey">{{ key }}</div></div><button class="btn-next" onclick="copyKey()">📋 Sao chép key</button>{% endif %}<div class="btn-group"><a href="/" class="btn-back">🔙 QUAY LẠI</a>{% if next_step %}<a href="{{ next_url }}" class="btn-next">➡️ TIẾP THEO BƯỚC {{ next_step }}</a>{% else %}<a href="/" class="btn-next">🏠 VỀ TRANG CHỦ</a>{% endif %}</div><div class="warning">💜 Cảm ơn bạn đã hoàn thành nhiệm vụ!</div></div><script>for(let i=0;i<100;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*8)+'px';c.style.height=(5+Math.random()*8)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),3000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
-"""
-
-FINAL_HTML = """
-<!DOCTYPE html>
-<html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Thành Công - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}.card{max-width:520px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4)}.success-icon{width:80px;height:80px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 24px}h2{font-size:32px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:24px;margin:24px 0;border:1px dashed #b000ff}.key-value{font-family:monospace;font-size:20px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all;margin:12px 0;cursor:pointer}.copy-btn{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:12px 32px;border-radius:40px;color:#fff;cursor:pointer;font-weight:600}.btn-back{display:inline-block;background:rgba(176,0,255,0.2);text-decoration:none;color:#b000ff;padding:10px 24px;border-radius:40px;margin-top:16px}.warning{font-size:12px;color:#666;margin:16px 0}</style></head>
-<body><div class="card"><div class="success-icon"><svg width="48" height="48" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 THÀNH CÔNG!</h2><div class="desc">Bạn đã hoàn thành tất cả nhiệm vụ</div><div class="key-box"><div style="font-size:11px;color:#b000ff;letter-spacing:2px;margin-bottom:10px">🔑 KEY KÍCH HOẠT</div><div class="key-value" id="licenseKey" onclick="copyKey()">{{ key }}</div><button class="copy-btn" onclick="copyKey()">📋 Sao chép key</button></div><div class="warning">⏰ Key có hiệu lực trong 24 giờ<br>📱 Nhập key vào ứng dụng DRAGON PINGX PREMIUM</div><a href="/" class="btn-back">🏠 Về trang chủ</a></div><script>for(let i=0;i<150;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*10)+'px';c.style.height=(5+Math.random()*10)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),5000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hoàn thành bước {{ step }}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
+.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}
+@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}
+.card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4);animation:bounce 0.8s;z-index:2}
+@keyframes bounce{0%{opacity:0;transform:scale(0.7)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
+.success-icon{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
+h2{font-size:28px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}
+.desc{color:#aaa;margin-bottom:30px}
+.btn-next{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:14px 30px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}
+.btn-next:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(176,0,255,0.4)}
+.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:20px;margin:20px 0;border:1px dashed #b000ff}
+.key-value{font-family:monospace;font-size:18px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all}
+.warning{font-size:12px;color:#666;margin-top:20px}
+</style></head>
+<body><div class="card"><div class="success-icon"><svg width="35" height="35" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 HOÀN THÀNH!</h2><div class="desc">{{ message }}</div>{% if key %}<div class="key-box"><div style="font-size:11px;color:#b000ff;margin-bottom:10px">🔑 KEY CỦA BẠN</div><div class="key-value" id="licenseKey">{{ key }}</div></div><button class="btn-next" onclick="copyKey()">📋 Sao chép key</button><br><a href="/" class="btn-next" style="margin-top:10px;background:rgba(176,0,255,0.2)">🏠 Về trang chủ</a>{% else %}<a href="{{ next_url }}" class="btn-next">➡️ TIẾP THEO BƯỚC {{ next_step }}</a>{% endif %}</div><script>for(let i=0;i<100;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*8)+'px';c.style.height=(5+Math.random()*8)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),3000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
 """
 
 ERROR_HTML = """
@@ -412,39 +188,38 @@ ERROR_HTML = """
 """
 
 ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th><tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
+<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><table><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
 """
 
-# ========== ROUTES WEB ==========
+# ========== ROUTES ==========
 @app.route('/')
 def index():
     return render_template_string(INDEX_HTML)
 
 @app.route('/getkey')
 def getkey():
-    ip_info = get_real_ip_with_port()
-    ip = ip_info['ip']
+    ip = get_real_ip()
     fp = get_fp()
-    
     if is_blocked(ip, fp):
         return render_template_string(ERROR_HTML, msg="Truy cập bị chặn!")
-    
-    if not check_ip_limit(ip):
-        block(ip, fp, f"Spam key - vượt quá giới hạn 3 key/giờ")
-        return render_template_string(ERROR_HTML, msg="Quá nhiều yêu cầu! Thử lại sau 1 giờ.")
-    
     sid = gen_sid()
-    create_task(sid, fp, ip_info)
-    
-    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip_info['ip']}:{ip_info['port']} | SID: {sid[:8]}")
-    
+    tasks = load_json(TASKS_FILE, {})
+    tasks[sid] = {
+        'step': 1, 's1_code': None, 's2_code': None,
+        'url1': short_link('trafficvn', f"{YOUR_DOMAIN}/task/{sid}/1"),
+        'url2': short_link('link4m', f"{YOUR_DOMAIN}/task/{sid}/2"),
+        'fp': fp, 'ip': ip, 'created': datetime.now().isoformat()
+    }
+    save_json(TASKS_FILE, tasks)
+    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}")
     return redirect(f'/step/{sid}/1')
 
 @app.route('/step/<sid>/<int:s>')
 def step_page(sid, s):
-    task = get_task(sid)
-    if not task:
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
+    task = tasks[sid]
     cfg = {
         1: {'title': '🚀 BƯỚC 1: TRAFFICVN', 'desc': 'Hoàn thành nhiệm vụ trên TrafficVN.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
         2: {'title': '🔗 BƯỚC 2: LINK4M', 'desc': 'Hoàn thành nhiệm vụ cuối cùng', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'}
@@ -452,67 +227,95 @@ def step_page(sid, s):
     c = cfg.get(s)
     if not c:
         return render_template_string(ERROR_HTML, msg="Bước không hợp lệ!")
-    return render_template_string(STEP_HTML, step=s, title=c['title'], desc=c['desc'], url=c['url'], sid=sid, total_steps=2, back_url=c['back'])
+    return render_template_string(STEP_HTML, step=s, title=c['title'], desc=c['desc'], url=c['url'], sid=sid, back_url=c['back'])
 
 @app.route('/task/<sid>/<int:s>')
-def task_complete(sid, s):
+def task_page(sid, s):
+    """Hiển thị mã xác nhận sau khi làm nhiệm vụ"""
     tasks = load_json(TASKS_FILE, {})
     if sid not in tasks:
-        return render_template_string(ERROR_HTML, msg="Session không hợp lệ!")
-    task = tasks[sid]
-    field = f's{s}'
-    if not task.get(field):
-        task[field] = True
-        task['step'] = s + 1
-        save_json(TASKS_FILE, tasks)
-        service = {1: 'trafficvn', 2: 'link4m'}[s]
-        amount = {1: 0.001, 2: 0.002}[s]
-        url_field = f'url{s}'
-        update_earnings(service, amount, task.get(url_field, ''), sid, task.get('ip', 'unknown'), task.get('fp', 'unknown'))
-        
-        if s == 2:
-            key = create_web_key(24, f"Session {sid}")
-            task['key'] = key
-            save_json(TASKS_FILE, tasks)
-            send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}:{task.get('port', 'unknown')}")
-            return render_template_string(DONE_STEP_HTML, 
-                message="🎉 CHÚC MỪNG! Bạn đã hoàn thành toàn bộ nhiệm vụ!",
-                next_step=None, next_url=None, key=key, step=s)
-        else:
-            send_tg(f"✅ HOÀN THÀNH BƯỚC {s} | IP: {task.get('ip', 'unknown')}:{task.get('port', 'unknown')}")
-            return render_template_string(DONE_STEP_HTML, 
-                message=f"✅ Bạn đã hoàn thành nhiệm vụ tại {service}!",
-                next_step=s+1, next_url=f'/step/{sid}/{s+1}', key=None, step=s)
-    return render_template_string(ERROR_HTML, msg="Bước đã hoàn thành trước đó!")
-
-@app.route('/api/check/<sid>/<int:s>')
-def check(sid, s):
-    task = get_task(sid)
-    if not task:
-        return jsonify({'completed': False})
-    if s == 1 and task.get('s1'):
-        return jsonify({'completed': True, 'next': f'/step/{sid}/2'})
-    elif s == 2 and task.get('s2'):
-        if task.get('key'):
-            return jsonify({'completed': True, 'next': f'/final/{sid}'})
-    return jsonify({'completed': False})
-
-@app.route('/final/<sid>')
-def final(sid):
-    task = get_task(sid)
-    if not task:
         return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
-    key = task.get('key')
-    if not key:
-        return render_template_string(ERROR_HTML, msg="Chưa có key!")
-    return render_template_string(FINAL_HTML, key=key)
+    
+    # Tạo mã xác nhận ngẫu nhiên
+    import random
+    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    
+    field = f's{s}_code'
+    tasks[sid][field] = code
+    save_json(TASKS_FILE, tasks)
+    
+    return render_template_string(f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="UTF-8"><title>Mã xác nhận</title>
+    <style>body{{background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:Arial}} .card{{background:#1a1a2e;padding:40px;border-radius:20px;text-align:center}} .code{{font-size:32px;letter-spacing:5px;color:#b000ff;margin:20px}} .btn{{background:#b000ff;color:#fff;padding:10px 20px;border-radius:10px;text-decoration:none;display:inline-block}}</style>
+    </head>
+    <body>
+    <div class="card">
+        <h2>✅ MÃ XÁC NHẬN</h2>
+        <div class="code">{code}</div>
+        <p>Copy mã này và dán vào web để hoàn thành bước {s}</p>
+        <a href="/step/{sid}/{s}" class="btn">← Quay lại nhập mã</a>
+    </div>
+    </body>
+    </html>
+    """)
+
+@app.route('/api/verify_code', methods=['POST'])
+def verify_code():
+    data = request.json
+    sid = data.get('sid')
+    step = data.get('step')
+    code = data.get('code', '').strip().upper()
+    
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
+        return jsonify({'success': False, 'message': 'Phiên không hợp lệ'})
+    
+    task = tasks[sid]
+    field = f's{step}_code'
+    expected = task.get(field)
+    
+    if not expected:
+        return jsonify({'success': False, 'message': 'Chưa tạo mã. Hãy bấm vào link nhiệm vụ trước!'})
+    
+    if code != expected:
+        return jsonify({'success': False, 'message': 'Mã xác nhận sai! Hãy kiểm tra lại.'})
+    
+    # Đánh dấu hoàn thành
+    task[f's{step}'] = True
+    task['step'] = step + 1
+    save_json(TASKS_FILE, tasks)
+    
+    if step == 2:
+        key = create_web_key(24)
+        task['key'] = key
+        save_json(TASKS_FILE, tasks)
+        send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}")
+        return jsonify({'success': True, 'next': f'/complete/{sid}/final'})
+    else:
+        return jsonify({'success': True, 'next': f'/complete/{sid}/{step+1}'})
+
+@app.route('/complete/<sid>/<status>')
+def complete_page(sid, status):
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
+        return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
+    task = tasks[sid]
+    
+    if status == 'final':
+        key = task.get('key')
+        if not key:
+            return render_template_string(ERROR_HTML, msg="Chưa có key!")
+        return render_template_string(COMPLETE_HTML, message="🎉 CHÚC MỪNG! Bạn đã hoàn thành toàn bộ nhiệm vụ!", key=key, next_step=None, next_url=None)
+    else:
+        next_step = int(status)
+        return render_template_string(COMPLETE_HTML, message=f"✅ Bạn đã hoàn thành bước {next_step-1}!", key=None, next_step=next_step, next_url=f'/step/{sid}/{next_step}')
 
 @app.route('/api/verify', methods=['POST'])
 def verify():
     fp = get_fp()
     ip = get_real_ip()
-    if is_blocked(ip, fp):
-        return jsonify({'status': 'error', 'message': 'Bị chặn'}), 403
     data = request.json
     key = data.get('key', '').strip().upper()
     if not key:
@@ -522,17 +325,27 @@ def verify():
     admin_keys = ["QANHNO1CRACKER", "DRAGONLOCUT"]
     if key in admin_keys:
         return jsonify({'status': 'success', 'message': 'Kích hoạt thành công!'})
-    success, msg = use_web_key(key, fp, ip)
-    if success:
-        send_tg(f"✅ KEY ĐÃ DÙNG: {key} | IP: {ip}")
-        return jsonify({'status': 'success', 'message': 'Key hợp lệ!'})
-    return jsonify({'status': 'error', 'message': msg})
+    
+    keys = load_json(KEYS_FILE, {})
+    if key not in keys:
+        return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
+    info = keys[key]
+    if datetime.now() > datetime.fromisoformat(info['expires']):
+        return jsonify({'status': 'expired', 'message': 'Key đã hết hạn!'})
+    if info.get('used'):
+        return jsonify({'status': 'used', 'message': 'Key đã được sử dụng!'})
+    info['used'] = True
+    info['used_at'] = datetime.now().isoformat()
+    info['used_by'] = fp
+    info['used_ip'] = ip
+    save_json(KEYS_FILE, keys)
+    send_tg(f"✅ KEY ĐÃ DÙNG: {key} | IP: {ip}")
+    return jsonify({'status': 'success', 'message': 'Key hợp lệ!'})
 
 @app.route('/api/stats')
 def api_stats():
     keys = load_json(KEYS_FILE, {})
-    earn = load_json(EARNINGS_FILE, {})
-    return jsonify({'total_keys': len(keys), 'total_used': sum(1 for k in keys.values() if k.get('used')), 'earnings_usd': earn.get('total', 0)})
+    return jsonify({'total_keys': len(keys), 'total_used': sum(1 for k in keys.values() if k.get('used'))})
 
 # ========== ADMIN ==========
 def admin_auth(f):
@@ -548,16 +361,14 @@ def admin_auth(f):
 @admin_auth
 def admin():
     stats = {'total_keys': len(load_json(KEYS_FILE, {})), 'total_used': sum(1 for k in load_json(KEYS_FILE, {}).values() if k.get('used')), 'total_users': len(load_json(TASKS_FILE, {}))}
-    earn = load_json(EARNINGS_FILE, {})
     blacklist = load_json(BLACKLIST_FILE, {'ips': []})
     keys = [{'key': k, **v} for k, v in load_json(KEYS_FILE, {}).items()][-50:]
-    return render_template_string(ADMIN_HTML, stats=stats, earnings=earn, blacklist=blacklist, keys=keys)
+    return render_template_string(ADMIN_HTML, stats=stats, earnings={'total': 0}, blacklist=blacklist, keys=keys)
 
 @app.route('/admin/create_key', methods=['POST'])
 @admin_auth
 def admin_create():
-    note = request.form.get('note', '')
-    key = create_web_key(720, note)
+    key = create_web_key(720)
     send_tg(f"👑 Admin tạo key: {key}")
     return redirect('/admin')
 
@@ -566,7 +377,10 @@ def admin_create():
 def admin_blacklist():
     ip = request.form.get('ip', '')
     if ip:
-        block(ip, '', 'Admin add')
+        b = load_json(BLACKLIST_FILE, {'ips': []})
+        if ip not in b['ips']:
+            b['ips'].append(ip)
+            save_json(BLACKLIST_FILE, b)
     return redirect('/admin')
 
 @app.route('/admin/unban')
