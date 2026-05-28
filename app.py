@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string, redirect, make_response
+from flask import Flask, request, jsonify, render_template_string, redirect, session
 import requests
 import random
 import string
@@ -7,8 +7,6 @@ import os
 import json
 import hashlib
 import secrets
-import time
-from functools import wraps
 import re
 import urllib.parse
 
@@ -18,22 +16,11 @@ app.secret_key = secrets.token_hex(32)
 # ========== CẤU HÌNH ==========
 LINK4M_API_KEY = "65c47d157fbdff4d79625e57"
 TRAFFICVN_API_KEY = "eef4080ff90f6180b109ecc46a78f33b"
-YOUR_DOMAIN = "https://roszmodxqanhno1.onrender.com"
-TELEGRAM_BOT_TOKEN = "8448578289:AAH2Pp6s3V1Le-cV5I1Qc-gFKQzTDBMXnvA"
-TELEGRAM_CHAT_ID = "8588555065"
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "Dragon@2024"
+VUOTNHANH_API_KEY = "e7c716d2-996f-4bdd-bcbf-7653223a400b"
+YOUR_DOMAIN = "https://YOUR_RENDER_URL.onrender.com"  # ⚠️ THAY URL CỦA BẠN
 
 KEYS_FILE = "keys.json"
 TASKS_FILE = "tasks.json"
-BLACKLIST_FILE = "blacklist.json"
-
-def get_real_ip():
-    cf = request.headers.get('Cf-Connecting-Ip')
-    if cf: return cf
-    xff = request.headers.get('X-Forwarded-For')
-    if xff: return xff.split(',')[0].strip()
-    return request.remote_addr
 
 def load_json(f, d=None):
     if d is None: d = {}
@@ -48,45 +35,27 @@ def save_json(f, d):
         return True
     except: return False
 
-def send_tg(msg):
-    try:
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-                      json={'chat_id': TELEGRAM_CHAT_ID, 'text': msg[:4000], 'parse_mode': 'HTML'}, timeout=5)
-    except: pass
-
 def gen_key():
     p1 = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
     p2 = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
-    raw = f"DRP-{p1}-{p2}"
+    raw = f"BUF-{p1}-{p2}"
     ck = hashlib.md5(raw.encode()).hexdigest()[:2].upper()
     return f"{raw}-{ck}"
 
-def verify_key(key):
-    if not key or len(key) < 15: return False
-    m = re.match(r'^DRP-[A-Z0-9]{6}-[A-Z0-9]{4}-([A-Z0-9]{2})$', key)
-    if not m: return False
-    return m.group(1) == hashlib.md5(key[:-3].encode()).hexdigest()[:2].upper()
-
-def get_fp():
-    return hashlib.sha256(f"{get_real_ip()}|{request.headers.get('User-Agent', 'unknown')}".encode()).hexdigest()[:32]
-
-def gen_sid():
-    return secrets.token_hex(16)
-
-def is_blocked(ip, fp):
-    b = load_json(BLACKLIST_FILE, {'ips': [], 'fps': []})
-    return ip in b.get('ips', []) or fp in b.get('fps', [])
-
 def short_link(service, url):
-    """Tạo link rút gọn, nếu lỗi thì trả về link gốc"""
     try:
         enc = urllib.parse.quote(url, safe='')
-        if service == 'trafficvn':
+        if service == 'vuotnhanh':
+            api = f"https://vuotnhanh.com/api?api={VUOTNHANH_API_KEY}&url={enc}&format=text"
+            r = requests.get(api, timeout=10)
+            if r.status_code == 200:
+                return r.text.strip()
+        elif service == 'trafficvn':
             api = f"https://trafficvn.com/api?api_key={TRAFFICVN_API_KEY}&url={enc}&format=json"
             r = requests.get(api, timeout=10)
             if r.status_code == 200:
                 d = r.json()
-                return d.get('shortenedUrl') or d.get('short_url') or d.get('url') or url
+                return d.get('shortenedUrl') or d.get('short_url') or url
         elif service == 'link4m':
             api = f"https://link4m.co/api-shorten/v2?api={LINK4M_API_KEY}&url={enc}"
             r = requests.get(api, timeout=5)
@@ -98,111 +67,182 @@ def short_link(service, url):
         print(f"Lỗi {service}: {e}")
     return url
 
-def create_key(expires_hours=24):
-    key = gen_key()
-    keys = load_json(KEYS_FILE, {})
-    keys[key] = {'expires': (datetime.now() + timedelta(hours=expires_hours)).isoformat(), 'used': False, 'created': datetime.now().isoformat()}
-    save_json(KEYS_FILE, keys)
-    return key
-
-# ========== HTML TEMPLATES ==========
+# ========== TRANG CHỦ ==========
 INDEX_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>DRAGON PINGX PREMIUM</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"><style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a 0%,#0f0f1a 50%,#0a0a0a 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
-.star{position:fixed;width:2px;height:2px;background:#fff;border-radius:50%;animation:shoot 4s linear infinite;z-index:1}
-@keyframes shoot{0%{transform:translateX(0)translateY(0);opacity:0}10%{opacity:1}20%{opacity:1}30%{opacity:0}100%{transform:translateX(-200px)translateY(200px);opacity:0}}
-.glow{position:fixed;width:400px;height:400px;background:radial-gradient(circle,rgba(176,0,255,0.1),transparent);border-radius:50%;pointer-events:none;z-index:1;transition:all 0.3s ease}
-.hero{text-align:center;max-width:650px;animation:fadeUp 0.8s;z-index:2}
-@keyframes fadeUp{from{opacity:0;transform:translateY(50px)}to{opacity:1;transform:translateY(0)}}
-.badge{display:inline-block;background:rgba(176,0,255,0.15);backdrop-filter:blur(10px);padding:8px 24px;border-radius:100px;font-size:12px;font-weight:600;color:#b000ff;border:1px solid rgba(176,0,255,0.4);margin-bottom:30px;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(176,0,255,0.4)}50%{box-shadow:0 0 0 20px rgba(176,0,255,0)}}
-h1{font-size:60px;font-weight:800;background:linear-gradient(135deg,#fff,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px;animation:gradient 4s infinite}
-@keyframes gradient{0%{background-position:0%50%}50%{background-position:100%50%}100%{background-position:0%50%}}
-.sub{font-size:16px;color:#aaa;margin-bottom:30px;line-height:1.6}
-.btn{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:16px 45px;font-size:16px;font-weight:600;color:#fff;border-radius:60px;display:inline-flex;align-items:center;gap:10px;text-decoration:none;box-shadow:0 5px 20px rgba(176,0,255,0.4);transition:0.3s}
-.btn:hover{transform:translateY(-5px) scale(1.05)}
-.stats{display:flex;justify-content:center;gap:40px;margin-top:50px;padding-top:30px;border-top:1px solid rgba(176,0,255,0.2)}
-.stat-number{font-size:28px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent}
-.stat-label{font-size:12px;color:#888;margin-top:5px}
-</style></head>
-<body><div id="g1" class="glow" style="top:-150px;left:-150px"></div><div id="g2" class="glow" style="bottom:-150px;right:-150px"></div><div class="hero"><div class="badge">✨ DRAGON PINGX PREMIUM | CHÍNH THỨC ✨</div><h1>DRAGON PINGX</h1><div class="sub">⚡ Hệ thống kích hoạt bản quyền tự động ⚡<br>🔒 Bảo mật tuyệt đối - 🚀 Tốc độ thần tốc</div><a href="/getkey" class="btn">🎁 NHẬN KEY MIỄN PHÍ →</a><div class="stats"><div><div class="stat-number">24/7</div><div class="stat-label">Hỗ trợ</div></div><div><div class="stat-number">2.5K+</div><div class="stat-label">Người dùng</div></div><div><div class="stat-number">100%</div><div class="stat-label">Bảo mật</div></div></div></div><script>for(let i=0;i<50;i++){let s=document.createElement('div');s.className='star';s.style.top=Math.random()*100+'%';s.style.left=Math.random()*100+'%';s.style.animationDelay=Math.random()*8+'s';document.body.appendChild(s)}document.addEventListener('mousemove',function(e){let g1=document.getElementById('g1');let g2=document.getElementById('g2');if(g1)g1.style.transform=`translate(${e.clientX*0.05}px,${e.clientY*0.05}px)`;if(g2)g2.style.transform=`translate(${-e.clientX*0.03}px,${-e.clientY*0.03}px)`})</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot BuffTiền - Nhận Key Miễn Phí</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Poppins',sans-serif;background:linear-gradient(135deg,#0a0f1a,#0f1525);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+        .card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(0,255,136,0.3);animation:fadeIn 0.6s}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+        .logo{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:36px}
+        h1{font-size:28px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent}
+        .sub{color:#aaa;margin:10px 0 30px;font-size:14px}
+        .btn{background:linear-gradient(135deg,#00ff88,#00cc66);border:none;padding:14px 28px;border-radius:40px;color:#0a0f1a;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;transition:0.3s}
+        .btn:hover{transform:scale(1.05);box-shadow:0 10px 20px rgba(0,255,136,0.3)}
+        .stats{display:flex;justify-content:center;gap:30px;margin-top:30px;padding-top:20px;border-top:1px solid rgba(0,255,136,0.2)}
+        .stat-number{font-size:24px;font-weight:700;color:#00ff88}
+        .stat-label{font-size:11px;color:#666}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="logo">💰</div>
+        <h1>Bot BuffTiền</h1>
+        <div class="sub">Hoàn thành nhiệm vụ → Nhận Key Premium</div>
+        <a href="/start" class="btn">🎁 BẮT ĐẦU NHẬN KEY</a>
+        <div class="stats">
+            <div><div class="stat-number" id="totalKeys">0</div><div class="stat-label">Key đã cấp</div></div>
+            <div><div class="stat-number">3</div><div class="stat-label">Bước</div></div>
+            <div><div class="stat-number">24h</div><div class="stat-label">Hạn key</div></div>
+        </div>
+    </div>
+    <script>fetch('/api/stats').then(r=>r.json()).then(d=>document.getElementById('totalKeys').innerText=d.total_keys||0)</script>
+</body>
+</html>
 """
 
-STEP_HTML = """
+# ========== TRANG NHIỆM VỤ ==========
+TASK_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Bước {{ step }} - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{max-width:550px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:32px;border:1px solid rgba(176,0,255,0.3);text-align:center}
-.step-badge{background:linear-gradient(135deg,#b000ff,#ff44ff);padding:6px 20px;border-radius:100px;font-size:12px;font-weight:600;color:#fff;display:inline-block;margin-bottom:20px}
-h2{font-size:28px;background:linear-gradient(135deg,#fff,#b000ff);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}
-.desc{color:#aaa;margin-bottom:20px}
-.info{background:rgba(255,193,7,0.1);border:1px solid rgba(255,193,7,0.3);border-radius:12px;padding:12px;margin:15px 0;font-size:13px;color:#ffc107}
-.task-link{background:rgba(0,0,0,0.4);border-radius:16px;padding:16px;margin:20px 0;word-break:break-all;border:1px dashed rgba(176,0,255,0.3)}
-.task-link a{color:#b000ff;text-decoration:none;font-size:14px}
-.btn-group{display:flex;gap:16px;margin-top:24px}
-.btn-continue{flex:1;background:linear-gradient(135deg,#00cc66,#00ff88);border:none;padding:14px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer}
-.btn-back{flex:1;background:rgba(176,0,255,0.2);border:1px solid rgba(176,0,255,0.5);padding:14px;border-radius:16px;color:#b000ff;font-weight:600;text-decoration:none;display:inline-block;text-align:center}
-.loading{display:inline-block;width:18px;height:18px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.warning{font-size:13px;color:#f87171;margin-top:16px;display:none}
-.warning.show{display:block}
-</style></head>
-<body><div class="card"><div class="step-badge">📌 BƯỚC {{ step }}/2</div><h2>{{ title }}</h2><div class="desc">{{ desc }}</div><div class="info">💰 Hoàn thành nhiệm vụ để nhận KEY MIỄN PHÍ!</div><div class="task-link"><div style="font-size:12px;color:#666;margin-bottom:8px;">🔗 Link nhiệm vụ của bạn:</div><a href="{{ url }}" target="_blank" id="taskLink">{{ url }}</a></div><div class="btn-group"><a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a><button class="btn-continue" onclick="checkComplete()" id="continueBtn">✅ TIẾP TỤC</button></div><div class="warning" id="warningMsg">⚠️ Bạn chưa hoàn thành nhiệm vụ!</div></div><script>let sid="{{ sid }}",step={{ step }},checking=false;async function checkComplete(){if(checking)return;checking=true;const btn=document.getElementById('continueBtn'),original=btn.innerHTML;btn.innerHTML='<span class="loading"></span> Đang kiểm tra...';btn.disabled=true;document.getElementById('warningMsg').classList.remove('show');try{const res=await fetch(`/api/check/${sid}/${step}`),data=await res.json();if(data.completed){window.location.href=data.next}else{document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}catch(e){document.getElementById('warningMsg').innerHTML='⚠️ Lỗi, thử lại!';document.getElementById('warningMsg').classList.add('show');btn.innerHTML=original;btn.disabled=false;checking=false}}</script></body></html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bước {{ step }}/3 - Bot BuffTiền</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Poppins',sans-serif;background:linear-gradient(135deg,#0a0f1a,#0f1525);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+        .card{max-width:550px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:32px;border:1px solid rgba(0,255,136,0.3);animation:fadeIn 0.4s}
+        @keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        .step-badge{background:rgba(0,255,136,0.15);padding:6px 16px;border-radius:100px;font-size:12px;color:#00ff88;display:inline-block;margin-bottom:20px}
+        h2{font-size:24px;color:#fff;margin-bottom:10px}
+        .desc{color:#aaa;font-size:14px;margin-bottom:20px}
+        .task-box{background:rgba(0,0,0,0.4);border-radius:16px;padding:20px;margin:20px 0;border:1px dashed rgba(0,255,136,0.3)}
+        .task-link{word-break:break-all;margin-bottom:15px}
+        .task-link a{color:#00ff88;text-decoration:none;font-size:14px}
+        .verify-input{width:100%;padding:12px;border-radius:12px;border:1px solid #333;background:#0a0f1a;color:#fff;margin:15px 0;font-size:14px}
+        .verify-input:focus{outline:none;border-color:#00ff88}
+        .btn-group{display:flex;gap:12px}
+        .btn-check{flex:1;background:linear-gradient(135deg,#00ff88,#00cc66);border:none;padding:12px;border-radius:12px;color:#0a0f1a;font-weight:600;cursor:pointer}
+        .btn-back{flex:1;background:rgba(255,255,255,0.1);border:1px solid rgba(0,255,136,0.5);padding:12px;border-radius:12px;color:#00ff88;font-weight:600;text-align:center;text-decoration:none}
+        .message{padding:10px;border-radius:10px;margin-top:15px;font-size:13px;display:none}
+        .message.show{display:block}
+        .message.success{background:rgba(0,255,136,0.2);color:#00ff88;border:1px solid #00ff88}
+        .message.error{background:rgba(255,68,68,0.2);color:#ff4444;border:1px solid #ff4444}
+        .warning{font-size:12px;color:#ffaa00;margin-top:10px}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="step-badge">📌 BƯỚC {{ step }}/3</div>
+        <h2>{{ title }}</h2>
+        <div class="desc">{{ desc }}</div>
+        
+        <div class="task-box">
+            <div class="task-link">🔗 <a href="{{ task_url }}" target="_blank" id="taskLink">{{ task_url }}</a></div>
+            <input type="text" class="verify-input" id="verifyCode" placeholder="Nhập mã xác nhận từ trang nhiệm vụ...">
+            <div class="btn-group">
+                <a href="{{ back_url }}" class="btn-back">🔙 Quay lại</a>
+                <button class="btn-check" onclick="verify()">✅ XÁC NHẬN</button>
+            </div>
+            <div class="warning">⚠️ Sau khi bấm vào link, đợi 10-15 giây và sao chép MÃ HIỂN THỊ</div>
+        </div>
+        <div id="msg" class="message"></div>
+    </div>
+    <script>
+        async function verify() {
+            const code = document.getElementById('verifyCode').value.trim();
+            if(!code) {
+                showMsg('Vui lòng nhập mã xác nhận!', 'error');
+                return;
+            }
+            const btn = document.querySelector('.btn-check');
+            const original = btn.innerHTML;
+            btn.innerHTML = '⏳ Đang xác nhận...';
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({sid: '{{ sid }}', step: {{ step }}, code: code})
+                });
+                const data = await res.json();
+                if(data.status === 'success') {
+                    showMsg('✅ Xác nhận thành công! Chuyển tiếp...', 'success');
+                    setTimeout(() => { window.location.href = data.next_url; }, 1500);
+                } else {
+                    showMsg(data.message || 'Mã không đúng! Thử lại.', 'error');
+                }
+            } catch(e) {
+                showMsg('Lỗi kết nối, thử lại!', 'error');
+            }
+            btn.innerHTML = original;
+            btn.disabled = false;
+        }
+        function showMsg(msg, type) {
+            const el = document.getElementById('msg');
+            el.innerHTML = msg;
+            el.className = `message ${type} show`;
+            setTimeout(() => el.classList.remove('show'), 3000);
+        }
+    </script>
+</body>
+</html>
 """
 
-DONE_STEP_HTML = """
+# ========== TRANG HOÀN THÀNH ==========
+SUCCESS_HTML = """
 <!DOCTYPE html>
 <html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Hoàn thành bước {{ step }}</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"><style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
-.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}
-@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}
-.card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4);animation:bounce 0.8s;z-index:2}
-@keyframes bounce{0%{opacity:0;transform:scale(0.7)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
-.success-icon{width:70px;height:70px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px}
-h2{font-size:28px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}
-.desc{color:#aaa;margin-bottom:30px}
-.btn-next{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:14px 30px;border-radius:16px;color:#fff;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;text-align:center;transition:0.3s}
-.btn-next:hover{transform:translateY(-2px);box-shadow:0 10px 20px rgba(176,0,255,0.4)}
-.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:20px;margin:20px 0;border:1px dashed #b000ff}
-.key-value{font-family:monospace;font-size:18px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all}
-.warning{font-size:12px;color:#666;margin-top:20px}
-</style></head>
-<body><div class="card"><div class="success-icon"><svg width="35" height="35" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 HOÀN THÀNH!</h2><div class="desc">{{ message }}</div>{% if key %}<div class="key-box"><div style="font-size:11px;color:#b000ff;margin-bottom:10px">🔑 KEY CỦA BẠN</div><div class="key-value" id="licenseKey">{{ key }}</div></div><button class="btn-next" onclick="copyKey()">📋 Sao chép key</button><br><a href="/" class="btn-next" style="margin-top:10px;background:rgba(176,0,255,0.2)">🏠 Về trang chủ</a>{% else %}<a href="{{ next_url }}" class="btn-next">➡️ TIẾP THEO BƯỚC {{ next_step }}</a>{% endif %}</div><script>for(let i=0;i<100;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*8)+'px';c.style.height=(5+Math.random()*8)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),3000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
-"""
-
-FINAL_HTML = """
-<!DOCTYPE html>
-<html lang="vi">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Thành Công - DRAGON PINGX</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#0a0a0a,#0f0f1a);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.confetti{position:fixed;width:10px;height:10px;position:absolute;animation:fall 3s linear forwards;z-index:9999}
-@keyframes fall{0%{transform:translateY(-100vh) rotate(0deg)}100%{transform:translateY(100vh) rotate(360deg);opacity:0}}
-.card{max-width:520px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(176,0,255,0.4)}
-.success-icon{width:80px;height:80px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 24px}
-h2{font-size:32px;background:linear-gradient(135deg,#fff,#00ff88);background-clip:text;-webkit-background-clip:text;color:transparent;margin-bottom:10px}
-.key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:24px;margin:24px 0;border:1px dashed #b000ff}
-.key-value{font-family:monospace;font-size:20px;font-weight:700;background:linear-gradient(135deg,#b000ff,#ff44ff);background-clip:text;-webkit-background-clip:text;color:transparent;word-break:break-all;margin:12px 0;cursor:pointer}
-.copy-btn{background:linear-gradient(135deg,#b000ff,#ff44ff);border:none;padding:12px 32px;border-radius:40px;color:#fff;cursor:pointer;font-weight:600}
-.btn-back{display:inline-block;background:rgba(176,0,255,0.2);text-decoration:none;color:#b000ff;padding:10px 24px;border-radius:40px;margin-top:16px}
-.warning{font-size:12px;color:#666;margin:16px 0}
-</style></head>
-<body><div class="card"><div class="success-icon"><svg width="48" height="48" fill="none" stroke="white" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg></div><h2>🎉 THÀNH CÔNG!</h2><div class="desc">Bạn đã hoàn thành tất cả nhiệm vụ</div><div class="key-box"><div style="font-size:11px;color:#b000ff;letter-spacing:2px;margin-bottom:10px">🔑 KEY KÍCH HOẠT</div><div class="key-value" id="licenseKey" onclick="copyKey()">{{ key }}</div><button class="copy-btn" onclick="copyKey()">📋 Sao chép key</button></div><div class="warning">⏰ Key có hiệu lực trong 24 giờ<br>📱 Nhập key vào ứng dụng DRAGON PINGX PREMIUM</div><a href="/" class="btn-back">🏠 Về trang chủ</a></div><script>for(let i=0;i<150;i++){let c=document.createElement('div');c.className='confetti';c.style.left=Math.random()*100+'%';c.style.animationDelay=Math.random()*2+'s';c.style.backgroundColor=['#b000ff','#ff44ff','#00ff88','#ffaa00'][Math.floor(Math.random()*4)];c.style.width=(5+Math.random()*10)+'px';c.style.height=(5+Math.random()*10)+'px';document.body.appendChild(c);setTimeout(()=>c.remove(),5000)}function copyKey(){const k=document.getElementById('licenseKey').innerText;navigator.clipboard.writeText(k);alert('✅ Đã sao chép key!\\nKey: '+k)}</script></body></html>
-"""
-
-ERROR_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Lỗi</title><style>body{background:#0a0a0a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:Arial}.card{background:#1a1a2e;padding:40px;border-radius:20px;text-align:center}.btn{background:#b000ff;color:#fff;padding:10px 20px;border-radius:10px;text-decoration:none;display:inline-block;margin-top:20px}</style></head><body><div class="card"><div class="error-icon">⚠️</div><h2>Đã xảy ra lỗi</h2><p>{{ msg }}</p><a href="/getkey" class="btn">Thử lại</a></div></body></html>
-"""
-
-ADMIN_HTML = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Admin Panel</title><style>body{background:#0a0a0a;color:#fff;font-family:Arial;padding:40px}.container{max-width:1200px;margin:0 auto}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:30px}.stat{background:#1a1a2e;border-radius:16px;padding:20px;text-align:center}.stat .value{font-size:32px;color:#b000ff}.card{background:#1a1a2e;border-radius:16px;padding:20px;margin-bottom:20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}input,button{padding:10px;border-radius:8px;border:none}input{background:#333;color:#fff}button{background:#b000ff;color:#fff;cursor:pointer}.logout{position:fixed;top:20px;right:20px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:8px;text-decoration:none}</style></head><body><a href="/admin/logout" class="logout">🚪 Đăng xuất</a><div class="container"><h1>🔐 ADMIN PANEL</h1><div class="stats"><div class="stat"><h3>📊 Tổng key</h3><div class="value">{{ stats.total_keys }}</div></div><div class="stat"><h3>✅ Key đã dùng</h3><div class="value">{{ stats.total_used }}</div></div><div class="stat"><h3>👥 Người dùng</h3><div class="value">{{ stats.total_users }}</div></div><div class="stat"><h3>💰 Thu nhập</h3><div class="value">${{ "%.2f"|format(earnings.total) }}</div></div></div><div class="card"><h2>🔑 Tạo key mới</h2><form method="POST" action="/admin/create_key"><input type="text" name="note" placeholder="Ghi chú"><button type="submit">➕ Tạo</button></form></div><div class="card"><h2>🚫 Blacklist IP</h2><form method="POST" action="/admin/blacklist"><input type="text" name="ip" placeholder="IP cần chặn"><button type="submit">🚫 Thêm</button></form><table style="margin-top:15px"><tr><th>IP</th><th>Hành động</th></tr>{% for ip in blacklist.ips %}<tr><td>{{ ip }}</td><td><a href="/admin/unban?ip={{ ip }}" style="color:#f87171">Xóa</a></td></tr>{% endfor %}</table</div><div class="card"><h2>📋 Key gần đây</h2><tr><th>Key</th><th>Trạng thái</th><th>Hết hạn</th></tr>{% for k in keys %}<tr><td><code>{{ k.key }}</code></td><td>{% if k.used %}✅ Đã dùng{% else %}🟢 Còn{% endif %}</td><td>{{ k.expires[:16] }}</td></tr>{% endfor %}</table</div></div></body></html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thành công - Bot BuffTiền</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Poppins',sans-serif;background:linear-gradient(135deg,#0a0f1a,#0f1525);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
+        .card{max-width:500px;width:100%;background:rgba(15,23,42,0.95);backdrop-filter:blur(20px);border-radius:32px;padding:40px;text-align:center;border:1px solid rgba(0,255,136,0.3);animation:bounce 0.6s}
+        @keyframes bounce{0%{opacity:0;transform:scale(0.8)}50%{transform:scale(1.05)}100%{transform:scale(1)}}
+        .success-icon{width:80px;height:80px;background:linear-gradient(135deg,#00ff88,#00cc66);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:45px}
+        h2{font-size:28px;color:#00ff88;margin-bottom:10px}
+        .key-box{background:linear-gradient(135deg,#0f172a,#1a1a2e);border-radius:20px;padding:20px;margin:20px 0;border:1px dashed #00ff88}
+        .key-value{font-family:monospace;font-size:18px;font-weight:700;color:#00ff88;word-break:break-all}
+        .btn{background:linear-gradient(135deg,#00ff88,#00cc66);border:none;padding:12px 24px;border-radius:40px;color:#0a0f1a;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block;margin:5px}
+        .warning{font-size:12px;color:#666;margin-top:20px}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="success-icon">🎉</div>
+        <h2>CHÚC MỪNG!</h2>
+        <div class="desc">Bạn đã hoàn thành tất cả nhiệm vụ</div>
+        <div class="key-box">
+            <div style="font-size:11px;color:#00ff88;margin-bottom:10px">🔑 KEY CỦA BẠN</div>
+            <div class="key-value" id="licenseKey">{{ key }}</div>
+        </div>
+        <button class="btn" onclick="copyKey()">📋 Sao chép key</button>
+        <a href="/" class="btn" style="background:rgba(0,255,136,0.2)">🏠 Về trang chủ</a>
+        <div class="warning">⏰ Key có hiệu lực trong 24 giờ</div>
+    </div>
+    <script>
+        function copyKey() {
+            const k = document.getElementById('licenseKey').innerText;
+            navigator.clipboard.writeText(k);
+            alert('✅ Đã sao chép key!\\nKey: ' + k);
+        }
+    </script>
+</body>
+</html>
 """
 
 # ========== ROUTES ==========
@@ -210,191 +250,192 @@ ADMIN_HTML = """
 def index():
     return render_template_string(INDEX_HTML)
 
-@app.route('/getkey')
-def getkey():
-    ip = get_real_ip()
-    fp = get_fp()
-    if is_blocked(ip, fp):
-        return render_template_string(ERROR_HTML, msg="Truy cập bị chặn!")
-    
-    sid = gen_sid()
+@app.route('/start')
+def start():
+    sid = secrets.token_hex(16)
     tasks = load_json(TASKS_FILE, {})
     
-    # Tạo link rút gọn
-    cb1 = f"{YOUR_DOMAIN}/api/callback/{sid}/1"
-    cb2 = f"{YOUR_DOMAIN}/api/callback/{sid}/2"
-    url1 = short_link('trafficvn', cb1)
-    url2 = short_link('link4m', cb2)
+    # Tạo link cho từng bước (VuotNhanh -> TrafficVN -> Link4m)
+    step1_url = short_link('vuotnhanh', f"{YOUR_DOMAIN}/api/task/{sid}/1")
+    step2_url = short_link('trafficvn', f"{YOUR_DOMAIN}/api/task/{sid}/2")
+    step3_url = short_link('link4m', f"{YOUR_DOMAIN}/api/task/{sid}/3")
     
     tasks[sid] = {
-        'step': 1, 's1': False, 's2': False,
-        'url1': url1, 'url2': url2,
-        'fp': fp, 'ip': ip, 'created': datetime.now().isoformat()
+        'step': 1,
+        'completed': [False, False, False],
+        'step1_code': None, 'step2_code': None, 'step3_code': None,
+        'created_at': datetime.now().isoformat()
     }
     save_json(TASKS_FILE, tasks)
-    send_tg(f"👤 TRUY CẬP MỚI | IP: {ip} | SID: {sid[:8]}")
     
-    return redirect(f'/step/{sid}/1')
+    return redirect(f'/task/{sid}/1')
 
-@app.route('/step/<sid>/<int:s>')
-def step_page(sid, s):
+@app.route('/task/<sid>/<int:step>')
+def task_page(sid, step):
     tasks = load_json(TASKS_FILE, {})
     if sid not in tasks:
-        return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
-    task = tasks[sid]
-    cfg = {
-        1: {'title': '🚀 BƯỚC 1: TRAFFICVN', 'desc': 'Hoàn thành nhiệm vụ trên TrafficVN.com', 'url': task.get('url1', '#'), 'back': '/getkey'},
-        2: {'title': '🔗 BƯỚC 2: LINK4M', 'desc': 'Hoàn thành nhiệm vụ cuối cùng', 'url': task.get('url2', '#'), 'back': f'/step/{sid}/1'}
-    }
-    c = cfg.get(s)
-    if not c:
-        return render_template_string(ERROR_HTML, msg="Bước không hợp lệ!")
-    return render_template_string(STEP_HTML, step=s, title=c['title'], desc=c['desc'], url=c['url'], sid=sid, total_steps=2, back_url=c['back'])
-
-@app.route('/api/callback/<sid>/<int:s>')
-def callback(sid, s):
-    """Callback khi hoàn thành nhiệm vụ"""
-    tasks = load_json(TASKS_FILE, {})
-    if sid not in tasks:
-        return "Session not found", 404
+        return "Phiên không hợp lệ!", 404
     
     task = tasks[sid]
-    field = f's{s}'
-    if task.get(field):
-        return "Already completed", 200
-    
-    task[field] = True
-    task['step'] = s + 1
-    save_json(TASKS_FILE, tasks)
-    
-    # Cập nhật thu nhập (để Telegram báo)
-    send_tg(f"✅ HOÀN THÀNH BƯỚC {s} | IP: {task.get('ip', 'unknown')}")
-    
-    if s == 2:
-        # Tạo key
-        key = create_key(24)
-        task['key'] = key
-        save_json(TASKS_FILE, tasks)
-        send_tg(f"🔑 KEY MỚI: {key} | IP: {task.get('ip', 'unknown')}")
-        return "OK - Key created"
-    
-    return "OK"
-
-@app.route('/api/check/<sid>/<int:s>')
-def check(sid, s):
-    task = load_json(TASKS_FILE, {}).get(sid)
-    if not task:
-        return jsonify({'completed': False})
-    
-    if s == 1 and task.get('s1'):
-        return jsonify({'completed': True, 'next': f'/step/{sid}/2'})
-    elif s == 2 and task.get('s2'):
+    if step > 3:
         if task.get('key'):
-            return jsonify({'completed': True, 'next': f'/final/{sid}'})
-    return jsonify({'completed': False})
+            return render_template_string(SUCCESS_HTML, key=task['key'])
+        return redirect(f'/task/{sid}/1')
+    
+    # Tạo mã xác nhận ngẫu nhiên cho bước này
+    code_key = f'step{step}_code'
+    if not task.get(code_key):
+        task[code_key] = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        save_json(TASKS_FILE, tasks)
+    
+    # Tạo link nhiệm vụ (dạng web giả lập hiển thị mã)
+    task_link = f"{YOUR_DOMAIN}/api/task/{sid}/{step}"
+    
+    config = {
+        1: {'title': '🚀 BƯỚC 1: VUOTNHANH', 'desc': 'Hoàn thành nhiệm vụ trên VuotNhanh.com'},
+        2: {'title': '📈 BƯỚC 2: TRAFFICVN', 'desc': 'Hoàn thành nhiệm vụ trên TrafficVN.com'},
+        3: {'title': '🔗 BƯỚC 3: LINK4M', 'desc': 'Hoàn thành nhiệm vụ cuối cùng'}
+    }
+    cfg = config.get(step)
+    
+    back_url = f'/task/{sid}/{step-1}' if step > 1 else '/start'
+    
+    return render_template_string(TASK_HTML, 
+                                  step=step, 
+                                  title=cfg['title'], 
+                                  desc=cfg['desc'],
+                                  task_url=task_link,
+                                  sid=sid,
+                                  back_url=back_url)
 
-@app.route('/final/<sid>')
-def final(sid):
-    task = load_json(TASKS_FILE, {}).get(sid)
-    if not task:
-        return render_template_string(ERROR_HTML, msg="Phiên không hợp lệ!")
-    key = task.get('key')
-    if not key:
-        return render_template_string(ERROR_HTML, msg="Chưa có key!")
-    return render_template_string(FINAL_HTML, key=key)
+@app.route('/api/task/<sid>/<int:step>')
+def api_task(sid, step):
+    """Trang hiển thị mã xác nhận - người dùng copy mã này"""
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
+        return "Phiên không hợp lệ!", 404
+    
+    task = tasks[sid]
+    code_key = f'step{step}_code'
+    code = task.get(code_key, 'ERROR')
+    
+    # Tạo link rút gọn thực tế để người dùng click (VD: link đến nội dung gì đó)
+    # Ở đây tạo link ảo để họ thấy mã
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Xác nhận nhiệm vụ - Bot BuffTiền</title>
+        <style>
+            body{{font-family:Arial;background:#0a0f1a;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center}}
+            .code{{font-size:40px;font-weight:bold;background:#00ff88;color:#0a0f1a;padding:20px;border-radius:20px;letter-spacing:5px;margin:20px}}
+        </style>
+    </head>
+    <body>
+        <div>
+            <h2>✅ NHIỆM VỤ BƯỚC {step}</h2>
+            <p>Mã xác nhận của bạn:</p>
+            <div class="code">{code}</div>
+            <p>📋 Sao chép mã này và quay lại trang trước để dán vào ô xác nhận</p>
+            <p><small>Mã có hiệu lực trong 10 phút</small></p>
+        </div>
+    </body>
+    </html>
+    """
+    return html
 
 @app.route('/api/verify', methods=['POST'])
-def verify():
-    fp = get_fp()
-    ip = get_real_ip()
-    if is_blocked(ip, fp):
-        return jsonify({'status': 'error', 'message': 'Bị chặn'}), 403
-    
+def api_verify():
     data = request.json
-    key = data.get('key', '').strip().upper()
-    if not key:
-        return jsonify({'status': 'error', 'message': 'Nhập key!'})
-    if not verify_key(key):
-        return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
+    sid = data.get('sid')
+    step = data.get('step')
+    code = data.get('code', '').strip().upper()
     
-    admin_keys = ["QANHNO1CRACKER", "DRAGONLOCUT"]
-    if key in admin_keys:
-        return jsonify({'status': 'success', 'message': 'Kích hoạt thành công!'})
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
+        return jsonify({'status': 'error', 'message': 'Phiên không hợp lệ!'})
     
-    keys = load_json(KEYS_FILE, {})
-    if key not in keys:
-        return jsonify({'status': 'invalid', 'message': 'Key không hợp lệ!'})
+    task = tasks[sid]
+    code_key = f'step{step}_code'
+    expected_code = task.get(code_key, '')
     
-    info = keys[key]
-    if datetime.now() > datetime.fromisoformat(info['expires']):
-        return jsonify({'status': 'expired', 'message': 'Key đã hết hạn!'})
-    if info.get('used'):
-        return jsonify({'status': 'used', 'message': 'Key đã được sử dụng!'})
+    if code != expected_code:
+        return jsonify({'status': 'error', 'message': 'Mã xác nhận không đúng!'})
     
-    info['used'] = True
-    info['used_at'] = datetime.now().isoformat()
-    info['used_by'] = fp
-    info['used_ip'] = ip
-    save_json(KEYS_FILE, keys)
-    send_tg(f"✅ KEY ĐÃ DÙNG: {key} | IP: {ip}")
-    return jsonify({'status': 'success', 'message': 'Key hợp lệ!'})
+    # Đánh dấu bước đã hoàn thành
+    task['completed'][step-1] = True
+    
+    if step < 3:
+        task['step'] = step + 1
+        save_json(TASKS_FILE, tasks)
+        return jsonify({'status': 'success', 'next_url': f'/task/{sid}/{step+1}'})
+    else:
+        # Hoàn thành cả 3 bước, tạo key
+        key = gen_key()
+        task['key'] = key
+        task['expires'] = (datetime.now() + timedelta(hours=24)).isoformat()
+        save_json(TASKS_FILE, tasks)
+        
+        # Lưu key vào keys.json
+        keys = load_json(KEYS_FILE, {})
+        keys[key] = {'expires': task['expires'], 'used': False, 'created_at': datetime.now().isoformat()}
+        save_json(KEYS_FILE, keys)
+        
+        return jsonify({'status': 'success', 'next_url': f'/task/{sid}/4'})
 
 @app.route('/api/stats')
 def api_stats():
     keys = load_json(KEYS_FILE, {})
-    return jsonify({'total_keys': len(keys), 'total_used': sum(1 for k in keys.values() if k.get('used'))})
+    return jsonify({'total_keys': len(keys)})
 
-# ========== ADMIN ==========
-def admin_auth(f):
-    @wraps(f)
-    def dec(*a, **k):
-        auth = request.authorization
-        if not auth or auth.username != ADMIN_USERNAME or auth.password != ADMIN_PASSWORD:
-            return make_response(('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="Admin"'}))
-        return f(*a, **k)
-    return dec
+# ========== API CHO BOT TELEGRAM ==========
+@app.route('/api/check_user', methods=['POST'])
+def api_check_user():
+    """Bot gọi để check user đã hoàn thành nhiệm vụ chưa"""
+    data = request.json
+    sid = data.get('sid')
+    
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
+        return jsonify({'status': 'error', 'message': 'SID không tồn tại'})
+    
+    task = tasks[sid]
+    if task.get('key'):
+        return jsonify({'status': 'success', 'key': task['key'], 'expires': task.get('expires')})
+    elif all(task['completed']):
+        return jsonify({'status': 'pending', 'message': 'Đã hoàn thành, đang tạo key...'})
+    else:
+        completed_steps = sum(task['completed'])
+        return jsonify({'status': 'incomplete', 'completed': completed_steps, 'total': 3})
 
-@app.route('/admin')
-@admin_auth
-def admin():
-    stats = {'total_keys': len(load_json(KEYS_FILE, {})), 'total_used': sum(1 for k in load_json(KEYS_FILE, {}).values() if k.get('used')), 'total_users': len(load_json(TASKS_FILE, {}))}
-    blacklist = load_json(BLACKLIST_FILE, {'ips': []})
-    earnings = {'total': 0}
-    keys = [{'key': k, **v} for k, v in load_json(KEYS_FILE, {}).items()][-50:]
-    return render_template_string(ADMIN_HTML, stats=stats, earnings=earnings, blacklist=blacklist, keys=keys)
-
-@app.route('/admin/create_key', methods=['POST'])
-@admin_auth
-def admin_create():
-    key = create_key(720)
-    send_tg(f"👑 Admin tạo key: {key}")
-    return redirect('/admin')
-
-@app.route('/admin/blacklist', methods=['POST'])
-@admin_auth
-def admin_blacklist():
-    ip = request.form.get('ip', '')
-    if ip:
-        b = load_json(BLACKLIST_FILE, {'ips': []})
-        if ip not in b['ips']:
-            b['ips'].append(ip)
-            save_json(BLACKLIST_FILE, b)
-    return redirect('/admin')
-
-@app.route('/admin/unban')
-@admin_auth
-def admin_unban():
-    ip = request.args.get('ip', '')
-    if ip:
-        b = load_json(BLACKLIST_FILE, {'ips': []})
-        if ip in b['ips']:
-            b['ips'].remove(ip)
-            save_json(BLACKLIST_FILE, b)
-    return redirect('/admin')
-
-@app.route('/admin/logout')
-def admin_logout():
-    return make_response(('Unauthorized', 401, {'WWW-Authenticate': 'Basic realm="Admin"'}))
+@app.route('/api/get_key', methods=['POST'])
+def api_get_key():
+    """Bot gọi để lấy key nếu đã hoàn thành"""
+    data = request.json
+    sid = data.get('sid')
+    
+    tasks = load_json(TASKS_FILE, {})
+    if sid not in tasks:
+        return jsonify({'status': 'error', 'message': 'SID không tồn tại'})
+    
+    task = tasks[sid]
+    if task.get('key'):
+        return jsonify({'status': 'success', 'key': task['key']})
+    elif all(task['completed']):
+        key = gen_key()
+        task['key'] = key
+        task['expires'] = (datetime.now() + timedelta(hours=24)).isoformat()
+        save_json(TASKS_FILE, tasks)
+        
+        keys = load_json(KEYS_FILE, {})
+        keys[key] = {'expires': task['expires'], 'used': False}
+        save_json(KEYS_FILE, keys)
+        
+        return jsonify({'status': 'success', 'key': key})
+    else:
+        return jsonify({'status': 'incomplete', 'message': 'Chưa hoàn thành nhiệm vụ'})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
